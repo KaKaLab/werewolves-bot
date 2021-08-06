@@ -74,9 +74,6 @@ export class Werewolves {
 
     private daysCount = -1;
 
-    private readonly debugVoteOnly = false;
-    private readonly debugShortTime = true;
-
     public inProgress = false;
 
     private witchRemainSkills = {
@@ -1014,7 +1011,7 @@ export class Werewolves {
         this.votes = [];
         Array.prototype.push.apply(this.votes, this.players);
 
-        const discussTime = this.debugShortTime ? 15 : 120;
+        const discussTime = this.config.isDebugShortTime() ? 15 : 120;
 
         const r = await api.channels(this.threadChannel!!).messages.post({
             data: {
@@ -1046,7 +1043,7 @@ export class Werewolves {
         // @ts-ignore
         const api: any = this.bot.api.api;
 
-        const voteTime = this.debugShortTime ? 10 : 30;
+        const voteTime = this.config.isDebugShortTime() ? 10 : 30;
         this.voteQuote = `請開始投票，${voteTime} 秒後結束投票。`;
         
         while(this.voteLimit < this.votes.length) {
@@ -1825,14 +1822,7 @@ export class Werewolves {
         this.daysCount = 0;
 
         this.currentTimeout = setTimeout(() => {
-            if(this.debugVoteOnly) {
-                this.voteLimit = this.players.length;
-                this.votes = [];
-                Array.prototype.push.apply(this.votes, this.players);
-                this.turnOfVote();
-            } else {
-                this.turnOfWerewolves();
-            }
+            this.turnOfWerewolves();
         }, 10000);
     }
 
@@ -1868,8 +1858,6 @@ export class Werewolves {
     }
 
     public async checkEndOrNext(next: () => void) {
-        Logger.log("checkEndOrNext() called");
-
         let gameMsg = "";
         const b = this.players.filter(p => p.alive).length;
         const w = this.getWerewolves().filter(p => p.alive).length;
@@ -1879,7 +1867,6 @@ export class Werewolves {
         } else if(b - w <= 1) {
             gameMsg = "遊戲結束，狼人勝利。";
         } else {
-            Logger.log("Game is not ended, continue...");
             next();
             return;
         }

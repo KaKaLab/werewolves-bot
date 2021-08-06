@@ -34,6 +34,7 @@ export class BotGuildConfig {
             gameChannel: "",
             minPlayers: 6,
             maxPlayers: 12,
+            debugShortTime: false,
             ...this.data
         };
         
@@ -58,5 +59,9 @@ export class BotGuildConfig {
 
     public getMinPlayers(): number {
         return this.data.minPlayers;
+    }
+
+    public isDebugShortTime(): boolean {
+        return this.data.debugShortTime;
     }
 }
