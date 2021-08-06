@@ -603,7 +603,7 @@ export class Werewolves {
 
         // @ts-ignore
         rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete();
+        await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete().catch(this.bot.failedToDeleteMessage("witch-msg-a"));
 
         this.turnOfDaylight("女巫請閉眼。");
     }
@@ -901,7 +901,7 @@ export class Werewolves {
         const rest: any = this.bot.api.api;
         await rest.channels(this.threadChannel!!).messages.post({
             data: this.getWerewolvesMessage()
-        });
+        }).catch(this.bot.failedToSendMessage("werewolves-action"));
     }
 
     private async turnOfSeer() {
@@ -1071,7 +1071,7 @@ export class Werewolves {
         let api: any = this.bot.api.api;
         Logger.log("endOfVote() called");
 
-        await api.channels(this.threadChannel!!).messages(this.voteMsgId).delete();
+        await api.channels(this.threadChannel!!).messages(this.voteMsgId).delete().catch(this.bot.failedToDeleteMessage("vote-msg"));
 
         this.votes.sort((a, b) => {
             return b.votes - a.votes;
@@ -1809,14 +1809,14 @@ export class Werewolves {
                 name: "狼人殺遊戲",
                 auto_archive_duration: 60
             }
-        });
+        }).catch(this.bot.failedToCreateThread("game-thread"));
         this.hasThread = true;
         
         for(var i=0; i<this.players.length; i++) {
             // @ts-ignore
             rest = api.api;
             const p = this.players[i].member.id;
-            rest.channels(r.id, "thread-members", p).put();
+            rest.channels(r.id, "thread-members", p).put().catch(this.bot.failedToAddThreadMember("game-thread-member"));
         }
 
         this.threadChannel = r.id;
@@ -1839,12 +1839,12 @@ export class Werewolves {
         let api: any = this.bot.api.api;
         if(this.threadChannel != null) {
             if(this.hasThread) {
-                await api.channels(this.threadChannel).delete();
+                await api.channels(this.threadChannel).delete().catch(this.bot.failedToDeleteChannel("clean-thread"));
             }
 
             // @ts-ignore
             api = this.bot.api.api;
-            await api.channels(this.gameChannel!!.id).messages(this.threadChannel).delete();
+            await api.channels(this.gameChannel!!.id).messages(this.threadChannel).delete().catch(this.bot.failedToDeleteMessage("clean-game-message"));
 
             this.threadChannel = null;
             this.appId = null;
@@ -1907,5 +1907,16 @@ export class Werewolves {
         if(this.currentTimeout) {
             clearTimeout(this.currentTimeout);
         }
+    }
+
+    // -- Dump --
+    public dumpPlayers(): any[] {
+        return this.players.map(v => {
+            return {
+                ...v,
+                member: v.member.user?.tag,
+                role: Role.getName(v.role)
+            };
+        });
     }
 }

@@ -164,6 +164,27 @@ export class WerewolvesBot {
         };
     }
 
+    public failedToDeleteChannel(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to delete " + name + " channel");
+            console.log(ex);
+        };
+    }
+
+    public failedToCreateThread(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to create " + name + " thread");
+            console.log(ex);
+        };
+    }
+
+    public failedToAddThreadMember(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to sadd " + name + " thread member");
+            console.log(ex);
+        };
+    }
+
     public async registerSlashCommands() {
         await Promise.all(this.api.guilds.cache.map(async (g) => {
             await this.registerGuildSlashCommands(g);
