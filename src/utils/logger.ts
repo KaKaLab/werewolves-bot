@@ -1,6 +1,6 @@
 import { KTextBase, KTextColor, LiteralText, TranslateText } from "./texts";
 
-enum LogLevel {
+export enum LogLevel {
     verbose,
     log,
     info,

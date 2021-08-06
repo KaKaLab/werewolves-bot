@@ -1,5 +1,5 @@
 import { WerewolvesBot } from "./bot";
-import { Logger } from "./utils/logger";
+import { Logger, LogLevel } from "./utils/logger";
 import * as readline from "readline";
 
 process.setUncaughtExceptionCaptureCallback(err => {
@@ -12,6 +12,8 @@ process.setUncaughtExceptionCaptureCallback(err => {
     }
     process.exit(0);
 });
+
+Logger.level = LogLevel.log;
 
 Logger.info("Hello world!");
 Logger.info("Starting WerewolvesBot...");

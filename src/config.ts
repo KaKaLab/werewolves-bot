@@ -7,11 +7,15 @@ export class BotConfig {
     public data: any;
 
     constructor() {
-        this.data = JSON.parse(fs.readFileSync(CONFIG_FILE_NAME).toString());
+        this.load();
 
         if(!this.data.token || this.data.token == '') {
             throw new Error('Discord bot token is not set!');
         }
+    }
+
+    public load() {
+        this.data = JSON.parse(fs.readFileSync(CONFIG_FILE_NAME).toString());
     }
 
     public getToken(): string {
@@ -20,5 +24,17 @@ export class BotConfig {
 
     public getGameChannel(): string {
         return this.data.gameChannel;
+    }
+
+    public getGuildId(): string {
+        return this.data.guildId;
+    }
+
+    public getMaxPlayers(): number {
+        return this.data.maxPlayers;
+    }
+
+    public getMinPlayers(): number {
+        return this.data.minPlayers;
     }
 }

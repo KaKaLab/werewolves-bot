@@ -32,8 +32,9 @@ export enum GameState {
     WEREWOLVES,
     SEER,
     WITCH,
-    HUNGER,
+    DISCUSS,
     KNIGHT,
+    HUNTER,
     VOTE,
     ENDED
 }
@@ -45,6 +46,9 @@ export class WPlayer {
     public number: number;
     public alive: boolean = true; 
     public role: Role = Role.INNOCENT;
+
+    public choice: number = -1;
+    public votes: number = 0;
 
     constructor(number: number, member: GuildMember) {
         this.number = number;
@@ -62,6 +66,7 @@ export class WPlayer {
 
 export class Werewolves {
     private players: WPlayer[] = []
+    private votes: WPlayer[] = []
     public state: GameState = GameState.READY;
     private bot: WerewolvesBot;
 
@@ -69,12 +74,29 @@ export class Werewolves {
     private threadChannel: string | null = null;
     private hasThread = false;
 
-    private static readonly MIN_PLAYERS = 3;
+    private static MIN_PLAYERS: number;
+    private static MAX_PLAYERS: number;
 
     private wolvesKilled = -1;
     private witchTarget = -1;
     private votedDown = -1;
     private witchAction: string | null = null;
+    private voteLimit = -1;
+
+    private knightAction = false;
+
+    private voteQuote = "";
+    private discussMsgId = null;
+    private voteMsgId = null;
+
+    private hunterNext = () => {};
+
+    private currentTimeout: NodeJS.Timeout | null = null;
+
+    private daysCount = -1;
+
+    private readonly debugVoteOnly = false;
+    private readonly debugShortTime = true;
 
     private witchRemainSkills = {
         kill: 1,
@@ -85,6 +107,7 @@ export class Werewolves {
 
     constructor(bot: WerewolvesBot) {
         this.bot = bot;
+        this.loadConfig();
 
         const api = bot.api;
         const chn = api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!.channels.cache.get(this.bot.config.getGameChannel());
@@ -93,34 +116,68 @@ export class Werewolves {
         }
     }
 
+    public loadConfig() {
+        Werewolves.MIN_PLAYERS = this.bot.config.getMinPlayers();
+        Werewolves.MAX_PLAYERS = this.bot.config.getMaxPlayers();
+        Logger.log(`min, max = ${Werewolves.MIN_PLAYERS}, ${Werewolves.MAX_PLAYERS}`);
+    }
+
+    public isMemberInGame(id: string) {
+        return !!this.players.find(p => p.member.id == id);
+    }
+
     public async init() {
         this.bot.api.on("interactionCreate", async (ev) => {
             if(this.state == GameState.READY) {
-                Logger.info("interaction -> state: ready");
+                Logger.log("interaction -> state: ready");
                 await this.handleLobbyInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.WEREWOLVES) {
-                Logger.info("interaction -> state: werewolves");
+                Logger.log("interaction -> state: werewolves");
                 await this.handleWerewolvesInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.SEER) {
-                Logger.info("interaction -> state: seer");
+                Logger.log("interaction -> state: seer");
                 await this.handleSeerInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.WITCH) {
                 if(ev.message.id == this.witchAMsgId) {
-                    Logger.info("interaction -> state: witch_a");
+                    Logger.log("interaction -> state: witch_a");
                     await this.handleWitchInteractionA(ev);
                 } else {
-                    Logger.info("interaction -> state: witch_b");
+                    Logger.log("interaction -> state: witch_b");
                     await this.handleWitchInteractionB(ev);
                 }
+                return;
+            }
+
+            if(this.state == GameState.DISCUSS) {
+                Logger.log("interaction -> state: discuss");
+                await this.handleDiscussInteraction(ev);
+                return;
+            }
+
+            if(this.state == GameState.KNIGHT) {
+                Logger.log("interaction -> state: knight");
+                await this.handleKnightInteraction(ev);
+                return;
+            }
+
+            if(this.state == GameState.HUNTER) {
+                Logger.log("interaction -> state: hunter");
+                await this.handleHunterInteraction(ev);
+                return;
+            }
+
+            if(this.state == GameState.VOTE) {
+                Logger.log("interaction -> state: vote");
+                await this.handleVoteInteraction(ev);
                 return;
             }
 
@@ -133,26 +190,58 @@ export class Werewolves {
         const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
         const member = await guild.members.fetch(userId);
 
+        var sendEphemeralEmbed = (desc: string) => {
+            // @ts-ignore
+            const api: any = this.bot.api.api;
+            api.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        flags: 64,
+                        embeds: [
+                            {
+                                ...this.getEmbedBase(),
+                                description: desc
+                            }
+                        ]
+                    }
+                }
+            });
+        }
+
         switch(ev.data.custom_id) {
             case "game_join":
+                if(this.players.length >= Werewolves.MAX_PLAYERS) {
+                    sendEphemeralEmbed("人數已滿，無法再加入。");
+                    return;
+                }
+
                 if(!this.players.find(m => m.member.id == userId)) {
                     const p = new WPlayer(this.players.length + 1, member);
                     this.players.push(p);
                 }
                 break;
             case "game_leave":
+                if(!this.players.find(p => p.member.id == userId)) {
+                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+                    return;
+                }
+
                 const index = this.players.findIndex(m => m.member.id == userId);
                 if(index != -1) {
                     this.players.splice(index, 1);
                 }
                 break;
             case "game_start":
+                if(!this.players.find(p => p.member.id == userId)) {
+                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+                    return;
+                }
+
                 const msgId = ev.message.id;
                 const api = this.bot.api;
                 const chn = api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!.channels.cache.get(this.bot.config.getGameChannel()) as PlayableChannel;
                 const msg = await chn.messages.fetch(msgId);
-                this.state = GameState.WEREWOLVES;
-                Logger.info("state -> werewolves");
 
                 this.assignRoles();
 
@@ -166,8 +255,18 @@ export class Werewolves {
                 }));
 
                 this.players.forEach(p => {
-                    p.member.send(`你的身分是: **${Role.getName(p.role)}。**`);
-                })
+                    let suffix = "";
+                    if(p.role == Role.WEREWOLVES) {
+                        suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
+                    }
+
+                    p.member.send({
+                        embed: {
+                            ...this.getEmbedBase(),
+                            description: `你的身分是: **${Role.getName(p.role)}。**` + suffix
+                        }
+                    });
+                });
 
                 // @ts-ignore
                 let rest: any = api.api;
@@ -222,11 +321,23 @@ export class Werewolves {
                     // @ts-ignore
                     rest = api.api;
                     const p = this.players[i].member.id;
-                    await rest.channels(r.id, "thread-members", p).put();
+                    rest.channels(r.id, "thread-members", p).put();
                 }
 
                 this.threadChannel = r.id;
-                this.turnOfWerewolves();
+                this.daysCount = 0;
+
+                this.currentTimeout = setTimeout(() => {
+                    if(this.debugVoteOnly) {
+                        this.voteLimit = this.players.length;
+                        this.votes = [];
+                        Array.prototype.push.apply(this.votes, this.players);
+                        this.turnOfVote();
+                    } else {
+                        this.turnOfWerewolves();
+                    }
+                }, 10000);
+
                 break;
         }
 
@@ -258,6 +369,42 @@ export class Werewolves {
         });
     }
 
+    public getKnights(): WPlayer[] {
+        return this.players.filter((p: WPlayer) => {
+            return p.role == Role.KNIGHT;
+        });
+    }
+
+    public getHunters(): WPlayer[] {
+        return this.players.filter((p: WPlayer) => {
+            return p.role == Role.HUNTER;
+        });
+    }
+
+    public refreshVotes() {
+        this.players.forEach(v => {
+            v.votes = 0;
+        });
+
+        this.players.forEach(v => {
+            if(v.choice >= 0) {
+                this.votes[v.choice].votes++;
+            }
+        });
+    }
+
+    private getPlayerDeadInvalidMessage() {
+        return {
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: "你已經死亡，無法執行該操作。"
+                }
+            ],
+            flags: 64
+        };
+    }
+
     private async handleWerewolvesInteraction(ev: KInteractionWS) {
         if(ev.data.custom_id != "werewolves_kill") return;
 
@@ -276,6 +423,15 @@ export class Werewolves {
                 data: {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.WEREWOLVES)
+                }
+            });
+            return;
+        }
+        if(!player.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
                 }
             });
             return;
@@ -336,6 +492,15 @@ export class Werewolves {
             });
             return;
         }
+        if(!player.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
+                }
+            });
+            return;
+        }
         
         const opt: string = ev.data.values[0];
         if(!opt.startsWith("player_")) {
@@ -391,6 +556,15 @@ export class Werewolves {
             });
             return;
         }
+        if(!player.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
+                }
+            });
+            return;
+        }
 
         const key = ev.data.custom_id.substring(6);
         if(key == "inspect") {
@@ -432,7 +606,7 @@ export class Werewolves {
             rest = this.bot.api.api;
             await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete();
 
-            this.turnOfPriorPriest("女巫請閉眼。");
+            this.turnOfDaylight("女巫請閉眼。");
         } else {
             // @ts-ignore
             const remains: number = this.witchRemainSkills[key];
@@ -473,8 +647,6 @@ export class Werewolves {
                     }
                 }
             });
-
-            this.turnOfWitchB();
         }
     }
 
@@ -496,6 +668,15 @@ export class Werewolves {
                 data: {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.WITCH)
+                }
+            });
+            return;
+        }
+        if(!player.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
                 }
             });
             return;
@@ -536,7 +717,281 @@ export class Werewolves {
         rest = this.bot.api.api;
         await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete();
 
-        this.turnOfPriorPriest("女巫請閉眼。");
+        this.turnOfDaylight("女巫請閉眼。");
+    }
+
+    private async handleDiscussInteraction(ev: KInteractionWS) {
+        if(!ev.data.custom_id.startsWith("discuss")) {
+            Logger.warn("Not discuss, but get " + ev.data.custom_id);
+            return;
+        }
+
+        const userId = ev.member.user.id;
+        // const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        // const member = await guild.members.fetch(userId);
+
+        var sendEphemeralEmbed = (desc: string) => {
+            // @ts-ignore
+            const api: any = this.bot.api.api;
+            api.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        flags: 64,
+                        embeds: [
+                            {
+                                ...this.getEmbedBase(),
+                                description: desc
+                            }
+                        ]
+                    }
+                }
+            });
+        }
+        const player = this.players.find(p => p.member.id == userId);
+        if(!player) {
+            sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+            return;
+        }
+        if(!player?.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
+                }
+            });
+            return;
+        }
+
+        // @ts-ignore
+        var rest: any = this.bot.api.api;
+        const key = ev.data.custom_id.substring(8);
+        
+        switch(key) {
+            case "vote":
+                rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+                this.voteLimit = this.players.length;
+                this.votes = [];
+                Array.prototype.push.apply(this.votes, this.players);
+                this.turnOfVote();
+                break;
+            case "knight":
+                const player = this.getKnights().find(p => {
+                    return p.member.id == userId
+                });
+                if(!player) {
+                    rest.interactions(ev.id, ev.token).callback.post({
+                        data: {
+                            type: 4,
+                            data: this.getRoleMismatchMessage(Role.KNIGHT)
+                        }
+                    });
+                    return;
+                }
+
+                this.knightAction = true;
+
+                rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+                
+                // @ts-ignore
+                rest = this.bot.api.api;
+                rest.interactions(ev.id, ev.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: this.getKnightMessage()
+                    }
+                });
+
+                this.state = GameState.KNIGHT;
+                Logger.log("state -> knight");
+                return;
+        }
+    }
+
+    private async handleKnightInteraction(ev: KInteractionWS) {
+        if(ev.data.custom_id != "knight_inspect") {
+            Logger.warn("Not knight_inspect, but get " + ev.data.custom_id);
+            return;
+        }
+
+        const userId = ev.member.user.id;
+        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const member = await guild.members.fetch(userId);
+
+        // @ts-ignore
+        var rest: any = this.bot.api.api;
+
+        const player = this.getKnights().find(p => {
+            return p.member.id == userId
+        });
+        if(!player) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getRoleMismatchMessage(Role.KNIGHT)
+                }
+            });
+            return;
+        }
+        if(!player.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
+                }
+            });
+            return;
+        }
+        
+        const opt: string = ev.data.values[0];
+        if(!opt.startsWith("player_")) {
+            Logger.warn("Not started with player_, but get " + opt);
+            return;
+        }
+
+        const n = parseInt(opt.substring(7));
+        const p = this.players.find(p => p.number == n)!!;
+        const isWolf = p.role == Role.WEREWOLVES;
+
+        (isWolf ? p : player).kill();
+
+        await rest.interactions(ev.id, ev.token).callback.post({
+            data: {
+                type: 4,
+                data: {
+                    embeds: [
+                        {
+                            ...this.getEmbedBase(),
+                            description: `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`
+                        }
+                    ]
+                }
+            }
+        });
+
+        // @ts-ignore
+        rest = this.bot.api.api;
+        rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+
+        this.turnOfWerewolves();    
+    }
+
+    private async handleHunterInteraction(ev: KInteractionWS) {
+        if(ev.data.custom_id != "hunter_target") return;
+
+        const userId = ev.member.user.id;
+        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const member = await guild.members.fetch(userId);
+
+        // @ts-ignore
+        var rest: any = this.bot.api.api;
+
+        const player = this.getHunters().find(p => {
+            return p.member.id == userId
+        });
+        if(!player) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getRoleMismatchMessage(Role.HUNTER)
+                }
+            });
+            return;
+        }
+        
+        const opt: string = ev.data.values[0];
+        if(!opt.startsWith("player_")) {
+            return;
+        }
+
+        const hunted = parseInt(opt.substring(7));
+        const killed = this.players.find(p => p.number == hunted);
+        killed?.kill();
+
+        await rest.interactions(ev.id, ev.token).callback.post({
+            data: {
+                type: 4,
+                data: {
+                    embeds: [
+                        {
+                            ...this.getEmbedBase(),
+                            description: `獵人帶走了 <@${killed!!.member.id}>。`
+                        }
+                    ]
+                }
+            }
+        });
+
+        // @ts-ignore
+        rest = this.bot.api.api;
+        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+
+        await this.checkEndOrNext(() => {
+            this.hunterNext();
+        });  
+    }
+
+    private async handleVoteInteraction(ev: KInteractionWS) {
+        if(ev.data.custom_id != "vote") {
+            return;
+        }
+
+        const userId = ev.member.user.id;
+        // const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        // const member = await guild.members.fetch(userId);
+
+        var sendEphemeralEmbed = (desc: string) => {
+            // @ts-ignore
+            const api: any = this.bot.api.api;
+            api.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: {
+                        flags: 64,
+                        embeds: [
+                            {
+                                ...this.getEmbedBase(),
+                                description: desc
+                            }
+                        ]
+                    }
+                }
+            });
+        }
+        const player = this.players.find(p => p.member.id == userId);
+        if(!player) {
+            sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+            return;
+        }
+        if(!player?.alive) {
+            rest.interactions(ev.id, ev.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getPlayerDeadInvalidMessage()
+                }
+            });
+            return;
+        }
+
+        // @ts-ignore
+        var rest: any = this.bot.api.api;
+        const opt: string = ev.data.values[0];
+        if(!opt.startsWith("vote_")) {
+            Logger.warn("Not started with vote_, but get " + opt);
+            return;
+        }
+
+        const n = parseInt(opt.substring(5));
+        const p = this.players.find(p => p.member.id == userId)!!;
+        p.choice = p.alive ? n : -1;
+        this.refreshVotes();
+
+        await rest.interactions(ev.id, ev.token).callback.post({
+            data: {
+                type: 7,
+                data: this.getVoteMessage()
+            }
+        });
     }
 
     private getRoleMismatchMessage(role: Role) {
@@ -552,6 +1007,9 @@ export class Werewolves {
     }
 
     private async turnOfWerewolves() {
+        this.state = GameState.WEREWOLVES;
+        Logger.log("state -> werewolves");
+
         // @ts-ignore
         const rest: any = this.bot.api.api;
         await rest.channels(this.threadChannel!!).messages.post({
@@ -562,7 +1020,7 @@ export class Werewolves {
     private async turnOfSeer() {
         if(this.getSeers().find(p => p.alive)) {
             this.state = GameState.SEER;
-            Logger.info("state -> seer");
+            Logger.log("state -> seer");
 
             // @ts-ignore
             const api: any = this.bot.api.api;
@@ -576,13 +1034,14 @@ export class Werewolves {
 
     private async turnOfWitchA() {
         this.witchTarget = -1;
+        this.witchAction = null;
         if(this.getWitches().find(p => p.alive)) {
             // @ts-ignore
             const api: any = this.bot.api.api;
             const prefix = this.state == GameState.WEREWOLVES ? "狼人請閉眼，" : "預言家請閉眼，";
 
             this.state = GameState.WITCH;
-            Logger.info("state -> witch");
+            Logger.log("state -> witch");
 
             const r = await api.channels(this.threadChannel!!).messages.post({
                 data: this.getWitchMessageA(prefix)
@@ -590,21 +1049,12 @@ export class Werewolves {
             this.witchAMsgId = r.id;
             Logger.info("WitchA msg id -> " + this.witchAMsgId);
         } else {
-            this.turnOfPriorPriest(GameState.WEREWOLVES ? "狼人請閉眼。" : "預言家請閉眼。");
+            this.turnOfDaylight(GameState.WEREWOLVES ? "狼人請閉眼。" : "預言家請閉眼。");
         }
     }
 
-    private async turnOfWitchB() {
-        // ?
-    }
-
-    private async turnOfPriorPriest(prefix: string) {
-        this.state = GameState.VOTE;
-        Logger.info("state -> vote");
-
-        // @ts-ignore
-        const api: any = this.bot.api.api;
-
+    private async turnOfDaylight(prefix: string) {
+        this.votes = [];
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
         const witchTarget = this.players.find(p => p.number == this.witchTarget);
 
@@ -615,26 +1065,187 @@ export class Werewolves {
             saved = false;
         }
 
+        if(this.witchAction == "kill") {
+            const killed = witchTarget;
+            killed?.kill();
+        }
+
+        this.daysCount++;
+
         const quote = saved ?
             `${prefix}天亮了。昨晚是平安夜。` :
-            (this.witchAction == "kill" && this.witchTarget == this.wolvesKilled ?
+            (this.witchAction == "kill" && this.witchTarget != this.wolvesKilled ?
                 `${prefix}天亮了。昨晚死亡的是 <@${wolvesKilled?.member.id}>、<@${witchTarget?.member.id}>。` :
                 `${prefix}天亮了。昨晚死亡的是 <@${wolvesKilled?.member.id}>。`);
 
-        api.channels(this.threadChannel!!).messages.post({
+        this.turnOfHunter(quote, () => {
+            this.turnOfDiscuss(quote);
+        });
+    }
+
+    private async turnOfHunter(quote: string, next: () => void) {
+        const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
+        const votedDown = this.votes[0];
+
+        let hunter: WPlayer | null = null;
+        if(wolvesKilled?.role == Role.HUNTER) hunter = wolvesKilled;
+        if(votedDown?.role == Role.HUNTER) hunter = votedDown;
+
+        if(hunter) {
+            this.state = GameState.HUNTER;
+            Logger.log("state -> hunter");
+
+            // @ts-ignore
+            const api: any = this.bot.api.api;
+            api.channels(this.threadChannel!!).messages.post({
+                data: {
+                    embeds: [
+                        {
+                            ...this.getGameEmbed(),
+                            description: quote + `\n<@${hunter.member.id}> 是獵人，請選擇要帶走的對象:`
+                        }
+                    ],
+                    components: this.getHunterComponents()
+                }
+            });
+            this.hunterNext = next;
+        } else {
+            this.checkEndOrNext(next);
+        }
+    }
+
+    private async turnOfDiscuss(quote: string) {
+        this.state = GameState.DISCUSS;
+        Logger.log("state -> discuss");
+
+        // @ts-ignore
+        const api: any = this.bot.api.api;
+
+        this.voteLimit = this.players.length;
+        this.votes = [];
+        Array.prototype.push.apply(this.votes, this.players);
+
+        const discussTime = this.debugShortTime ? 15 : 120;
+
+        const r = await api.channels(this.threadChannel!!).messages.post({
             data: {
                 embeds: [
                     {
                         ...this.getGameEmbed(),
-                        description: quote
+                        description: quote + ((quote && quote.trim() != "") ? "\n" : "") +`請玩家發言，${discussTime} 秒後開放投票。`
+                    }
+                ],
+                components: this.getDiscussComponents()
+            }
+        });
+
+        this.currentTimeout = setTimeout(() => {
+            // @ts-ignore
+            const api: any = this.bot.api.api;
+            api.channels(this.threadChannel!!).messages(r.id).patch({
+                data: {
+                    components: this.getDiscussComponents(true)
+                }
+            });
+        }, discussTime * 1000);
+    }
+
+    private async turnOfVote(appendEmbeds: any[] = []) {
+        this.state = GameState.VOTE;
+        Logger.log("state -> vote");
+
+        // @ts-ignore
+        const api: any = this.bot.api.api;
+
+        const voteTime = this.debugShortTime ? 10 : 30;
+        this.voteQuote = `請開始投票，${voteTime} 秒後結束投票。`;
+        
+        while(this.voteLimit < this.votes.length) {
+            this.votes.pop();
+        }
+
+        this.players.forEach(v => {
+            v.choice = -1;
+        });
+        this.refreshVotes();
+
+        const r = await api.channels(this.threadChannel!!).messages.post({
+            data: this.getVoteMessage(appendEmbeds)
+        });
+        this.voteMsgId = r.id;
+
+        this.currentTimeout = setTimeout(() => {
+            this.endOfVote();
+        }, voteTime * 1000);
+    }
+
+    private async endOfVote() {
+        // @ts-ignore
+        let api: any = this.bot.api.api;
+        Logger.log("endOfVote() called");
+
+        await api.channels(this.threadChannel!!).messages(this.voteMsgId).delete();
+
+        this.votes.sort((a, b) => {
+            return b.votes - a.votes;
+        });
+
+        if(this.votes[0].votes == 0) {
+            // @ts-ignore
+            api = this.bot.api.api;
+            await api.channels(this.threadChannel!!).messages.post({
+                data: {
+                    embeds: [
+                        {
+                            ...this.getEmbedBase(),
+                            description: `無人投票，進入下一晚...`
+                        }
+                    ]
+                }
+            });
+            this.turnOfWerewolves();
+            return;
+        }
+
+        let t = 0;
+        this.votes.forEach(v => {
+            if(this.votes[0].votes == v.votes) {
+                t++;
+            }
+        });
+
+        if(t > 1) {
+            this.voteLimit = t;
+            this.turnOfVote([
+                {
+                    ...this.getEmbedBase(),
+                    description: `有 ${t} 個人同票，需要重新投票！`
+                }
+            ]);
+            return;
+        }
+
+        // @ts-ignore
+        api = this.bot.api.api;
+        await api.channels(this.threadChannel!!).messages.post({
+            data: {
+                embeds: [
+                    {
+                        ...this.getEmbedBase(),
+                        description: `最高票為 <@${this.votes[0].member.id}>`
                     }
                 ]
             }
         });
+        this.votes[0].kill();
+
+        this.turnOfHunter("", () => {
+            this.turnOfWerewolves();
+        });
     }
 
     public assignRoles() {
-        const roleCount = [];
+        const roleCount: number[] = [];
         for(var i=0; i<Role.COUNT; i++) {
             roleCount.push(0);
         }
@@ -643,28 +1254,60 @@ export class Werewolves {
         var mod = (b + 1) % 3;
         var priestCount = ((b + 1) / 9) | 0;
         var counter = 0;
+
+        const seerCount = 1;
+        const witchCount = 1;
+        const hunterCount = 1;
+        const werewolvesCount = ((b / 3) | 0);
+
+        let maxRole = seerCount;
+        maxRole += witchCount;
+        maxRole += hunterCount;
+        maxRole += werewolvesCount;
+        if(b > 6) maxRole++;
+
+        var failSafe = 0;
+
+        var failSafeCall = () => {
+            failSafe++;
+            if(failSafe >= 400) {
+                console.log("b:", b);
+                console.log("maxRole:", maxRole);
+                console.log("roleCount:", roleCount);
+                return false;
+            }
+            return true;
+        }
         
         while (counter < b) {
-            const r = Math.floor((Role.COUNT - 1) * Math.random());
+            const r = Math.floor(Role.COUNT * Math.random());
             const e = Math.floor(Math.random() * b);
             const p = this.players[e];
             var role = Role.INNOCENT;
 
-            if(p.role != Role.INNOCENT) continue;
+            if(p.role != Role.INNOCENT) {
+                if(!failSafeCall()) {
+                    break;   
+                }
+                continue;
+            }
 
-            if(r == Role.SEER && roleCount[Role.SEER] < Math.max(priestCount + (mod >= 1 ? 1 : 0), 1)) {
+            if(r == Role.SEER && roleCount[Role.SEER] < seerCount) {
                 role = Role.SEER;
-            } else if(r == Role.WITCH && roleCount[Role.WITCH] < Math.max(priestCount + (mod >= 2 ? 1 : 0), 1)) {
+            } else if(r == Role.WITCH && roleCount[Role.WITCH] < witchCount) {
                 role = Role.WITCH;
-            } else if(false && r == Role.HUNTER && roleCount[Role.HUNTER] < Math.max(priestCount, 1)) {
+            } else if(r == Role.HUNTER && roleCount[Role.HUNTER] < hunterCount) {
                 role = Role.HUNTER;
-            } else if(false && r == Role.KNIGHT && b > 6 && roleCount[Role.KNIGHT] < 1) {
+            } else if(r == Role.KNIGHT && b > 6 && roleCount[Role.KNIGHT] < 1) {
                 role = Role.KNIGHT;
-            } else if(r == Role.WEREWOLVES && roleCount[Role.WEREWOLVES] < ((b / 3) | 0)) {
+            } else if(r == Role.WEREWOLVES && roleCount[Role.WEREWOLVES] < werewolvesCount) {
                 role = Role.WEREWOLVES;
-            } else if(false && r == Role.INNOCENT && roleCount[Role.INNOCENT] < ((b / 3) | 0)) {
+            } else if(r == Role.INNOCENT && roleCount[Role.INNOCENT] < b - maxRole) {
                 role = Role.INNOCENT;
             } else {
+                if(!failSafeCall()) {
+                    break;   
+                }
                 continue;
             }
 
@@ -692,6 +1335,7 @@ export class Werewolves {
                 }
             ] : [];
         });
+        console.log(options);
 
         if(options.length == 0) {
             options = [
@@ -758,6 +1402,48 @@ export class Werewolves {
                         {
                             type: 3,
                             custom_id: "seer_inspect",
+                            options
+                        }
+                    ]
+                }
+            ]
+        };
+    }
+
+    private getKnightMessage(): any {
+        var options = this.players.flatMap(m => {
+            const name = (m.member.nickname ?? m.member.user.username) + "#" + m.member.user.discriminator;
+            return m.alive ? [
+                {
+                    label: name,
+                    value: "player_" + m.number
+                }
+            ] : [];
+        });
+
+        if(options.length == 0) {
+            options = [
+                {
+                    label: "大家都死掉了",
+                    value: "everyone_dead"
+                }
+            ];
+        }
+
+        return {
+            embeds: [
+                {
+                    ...this.getGameEmbed(),
+                    description: "騎士選擇發動技能，請選擇對象:"
+                }
+            ],
+            components: [
+                {
+                    type: 1,
+                    components: [
+                        {
+                            type: 3,
+                            custom_id: "knight_inspect",
                             options
                         }
                     ]
@@ -850,11 +1536,121 @@ export class Werewolves {
         };
     }
 
+    private getHunterComponents(): any {
+        var options = this.players.flatMap(m => {
+            const name = (m.member.nickname ?? m.member.user.username) + "#" + m.member.user.discriminator;
+            return m.alive ? [
+                {
+                    label: name,
+                    value: "player_" + m.number
+                }
+            ] : [];
+        });
+
+        if(options.length == 0) {
+            options = [
+                {
+                    label: "大家都死掉了",
+                    value: "everyone_dead"
+                }
+            ];
+        }
+
+        return [
+            {
+                type: 1,
+                components: [
+                    {
+                        type: 3,
+                        custom_id: "hunter_target",
+                        options
+                    }
+                ]
+            }
+        ];
+    }
+
+    private getDiscussComponents(voteEnabled = false): any {
+        return [
+            {
+                type: 1,
+                components: [
+                    {
+                        type: 2,
+                        custom_id: "discuss_vote",
+                        style: 2,
+                        label: "開始投票",
+                        disabled: !voteEnabled
+                    },
+                    {
+                        type: 2,
+                        custom_id: "discuss_knight",
+                        style: 1,
+                        label: "騎士發動技能",
+                        disabled: this.getKnights().filter(p => p.alive).length == 0
+                    }
+                ]
+            }
+        ]
+    }
+
+    private getVoteMessage(appendEmbeds: any[] = []): any {
+        return {
+            embeds: [
+                ...appendEmbeds,
+                {
+                    ...this.getVoteEmbed(),
+                    description: this.voteQuote
+                }
+            ],
+            components: this.getVoteComponents()
+        };
+    }
+
+    private getVoteComponents(): any {
+        var options = this.votes.flatMap((m, i) => {
+            const name = (m.member.nickname ?? m.member.user.username) + "#" + m.member.user.discriminator;
+            return this.voteLimit >= i + 1 && m.alive ? [
+                {
+                    label: name,
+                    value: "vote_" + i
+                }
+            ] : [];
+        });
+
+        if(options.length == 0) {
+            options = [
+                {
+                    label: "大家都死掉了",
+                    value: "everyone_dead"
+                }
+            ];
+        }
+
+        return [
+            {
+                type: 1,
+                components: [
+                    {
+                        type: 3,
+                        custom_id: "vote",
+                        options
+                    }
+                ]
+            }
+        ]
+    }
+
     private getEmbedBase(): any {
+        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const member = guild.members.cache.get(this.bot.api.user?.id!!);
+
+        const dayStr = this.daysCount >= 0 ? `第 ${this.daysCount} 天` : (member?.nickname ?? this.bot.api.user?.username);
+
         return {
             color: 0xffa970,
             author: {
-                name: this.bot.api.user?.username,
+                name: dayStr,
                 icon_url: this.bot.api.user?.avatarURL()
             }
         };
@@ -879,7 +1675,7 @@ export class Werewolves {
                 },
                 {
                     name: "人數",
-                    value: `${this.players.length} / ${Werewolves.MIN_PLAYERS}`,
+                    value: `${this.players.length} / ${Werewolves.MAX_PLAYERS}\n達到 ${Werewolves.MIN_PLAYERS} 人可開始`,
                     inline: true
                 }
             ]
@@ -953,9 +1749,67 @@ export class Werewolves {
         };
     }
 
+    private getEndGameEmbed(): any {
+        var players = this.players.map((m: WPlayer, i: number) => {
+            const f = m.alive ? "" : "~~";
+            return `${i+1}. ${f}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
+        }).join("\n");
+
+        if(players == "") {
+            players = "<空>";
+        }
+
+        const count = this.getAliveCount();
+
+        return {
+            ...this.getEmbedBase(),
+            fields: [
+                {
+                    name: "目前玩家",
+                    value: players,
+                    inline: true
+                },
+                {
+                    name: "存活人數",
+                    value: `${count} / ${this.players.length}`,
+                    inline: true
+                }
+            ]
+        };
+    }
+
+    private getVoteEmbed(): any {
+        var players = this.votes.map((m: WPlayer, i: number) => {
+            const f = m.alive ? "" : "~~";
+            return `${i+1}. ${f}<@${m.member.id}>${f}${!m.alive ? " (死亡)" : ` (${m.votes} 票)`}`;
+        }).join("\n");
+
+        if(players == "") {
+            players = "<空>";
+        }
+
+        const count = this.getAliveCount();
+
+        return {
+            ...this.getEmbedBase(),
+            fields: [
+                {
+                    name: "投票選項",
+                    value: players,
+                    inline: true
+                }
+            ]
+        };
+    }
+
     public async startLobby() {
+        this.state = GameState.READY;
+        Logger.log("state -> ready");
+
         Logger.info("Lobby started!");
-        Logger.info("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
+        Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
+
+        this.players = [];
 
         // @ts-ignore
         const api: any = this.bot.api.api;
@@ -963,13 +1817,14 @@ export class Werewolves {
             data: this.getLobbyMessage()
         });
         this.threadChannel = r.id;
+        this.hasThread = false;
     }
 
     public startGame() {
 
     }
 
-    public async stopGame() {
+    public async cleanGame() {
         // @ts-ignore
         let api: any = this.bot.api.api;
         if(this.threadChannel != null) {
@@ -982,5 +1837,39 @@ export class Werewolves {
             await api.channels(this.gameChannel!!.id).messages(this.threadChannel).delete();
             this.threadChannel = null;
         }
+    }
+
+    public async checkEndOrNext(next: () => void) {
+        Logger.log("checkEndOrNext() called");
+
+        let gameMsg = "";
+        const b = this.players.filter(p => p.alive).length;
+        const w = this.getWerewolves().filter(p => p.alive).length;
+
+        if(w == 0) {
+            gameMsg = "遊戲結束，好人勝利。";
+        } else if(b - w <= 1) {
+            gameMsg = "遊戲結束，狼人勝利。";
+        } else {
+            Logger.log("Game is not ended, continue...");
+            next();
+            return;
+        }
+
+        this.daysCount = -1;
+        // @ts-ignore
+        let api: any = this.bot.api.api;
+        api.channels(this.threadChannel!!).messages.post({
+            data: {
+                embeds: [
+                    {
+                        ...this.getEndGameEmbed(),
+                        description: gameMsg
+                    }
+                ]
+            }
+        })
+        this.threadChannel = null;
+        this.startLobby();
     }
 }

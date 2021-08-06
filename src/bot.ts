@@ -1,3 +1,4 @@
+import { DMChannel, Message } from 'discord.js';
 import { Client } from 'discord.js';
 import { BotConfig } from './config';
 import { Werewolves } from './game/werewolves';
@@ -12,7 +13,7 @@ export class WerewolvesBot {
 
     private game: Werewolves | null = null;
 
-    public static readonly GUILD_ID = "680280617149005836";
+    public static GUILD_ID: string;
 
     constructor() {
         this.config = new BotConfig();
@@ -29,8 +30,9 @@ export class WerewolvesBot {
                 name: "你們相愛相殺 <3",
                 type: "WATCHING"
             });
-            await this.api.user?.setStatus("idle");
+            await this.api.user?.setStatus("dnd");
 
+            WerewolvesBot.GUILD_ID = this.config.getGuildId();
             await this.api.guilds.fetch(WerewolvesBot.GUILD_ID);
 
             // Werewolves start
@@ -40,18 +42,43 @@ export class WerewolvesBot {
             this.game.startLobby();
         });
 
+        this.api.on("message", (msg: Message) => {
+            if(msg.channel instanceof DMChannel && msg.author.id != this.api.user?.id) {
+                Logger.info(msg.author.tag + ": " + msg.content);
+            }
+        })
+
         this.api.login(this.config.getToken());
     }
 
     public async acceptConsoleInput(input: string) {
         if(!this.canAcceptConsoleInput) return;
 
-        if(input.trim() == "exit") {
-            this.canAcceptConsoleInput = false;
-            Logger.info("Exiting...");
-            await this.game?.stopGame();
-            this.api.destroy();
-            process.exit(0);
+        if(input.trim() == "reload") {
+            Logger.info("Reloading...");
+            this.reload();
         }
+
+        if(input.trim() == "exit") {
+            await this.exit();
+        }
+    }
+
+    public reload() {
+        this.loadConfig();
+        this.game?.loadConfig();
+    }
+
+    public loadConfig() {
+        this.config.load();
+        WerewolvesBot.GUILD_ID = this.config.getGuildId();
+    }
+
+    public async exit() {
+        this.canAcceptConsoleInput = false;
+        Logger.info("Exiting...");
+        await this.game?.cleanGame();
+        this.api.destroy();
+        process.exit(0);
     }
 }
