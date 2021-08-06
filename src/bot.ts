@@ -143,48 +143,6 @@ export class WerewolvesBot {
         this.api.login(this.config.getToken());
     }
 
-    public failedToSendMessage(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to send " + name + " message");
-            console.log(ex);
-        };
-    }
-
-    public failedToEditMessage(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to edit " + name + " message");
-            console.log(ex);
-        };
-    }
-
-    public failedToDeleteMessage(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to delete " + name + " message");
-            console.log(ex);
-        };
-    }
-
-    public failedToDeleteChannel(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to delete " + name + " channel");
-            console.log(ex);
-        };
-    }
-
-    public failedToCreateThread(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to create " + name + " thread");
-            console.log(ex);
-        };
-    }
-
-    public failedToAddThreadMember(name: string) {
-        return (ex: any) => {
-            Logger.error("Failed to sadd " + name + " thread member");
-            console.log(ex);
-        };
-    }
-
     public async registerSlashCommands() {
         await Promise.all(this.api.guilds.cache.map(async (g) => {
             await this.registerGuildSlashCommands(g);
@@ -201,6 +159,11 @@ export class WerewolvesBot {
                     {
                         name: "summon",
                         description: "在當前頻道開始一場狼人殺遊戲。",
+                        type: CommandOptionType.SUB_COMMAND
+                    },
+                    {
+                        name: "credit",
+                        description: "想了解那些辛苦對抗各種 Bug 的開發人員嗎！！！！",
                         type: CommandOptionType.SUB_COMMAND
                     }
                 ]
@@ -289,5 +252,47 @@ export class WerewolvesBot {
         }
         this.api.destroy();
         process.exit(0);
+    }
+
+    public failedToSendMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to send " + name + " message");
+            console.log(ex);
+        };
+    }
+
+    public failedToEditMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to edit " + name + " message");
+            console.log(ex);
+        };
+    }
+
+    public failedToDeleteMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to delete " + name + " message");
+            console.log(ex);
+        };
+    }
+
+    public failedToDeleteChannel(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to delete " + name + " channel");
+            console.log(ex);
+        };
+    }
+
+    public failedToCreateThread(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to create " + name + " thread");
+            console.log(ex);
+        };
+    }
+
+    public failedToAddThreadMember(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to sadd " + name + " thread member");
+            console.log(ex);
+        };
     }
 }
