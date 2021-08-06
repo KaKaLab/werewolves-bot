@@ -30,14 +30,10 @@ export class Logger {
         const msg = f.addWith(
             tag, t, 
             LiteralText.of(new Date().toISOString()).setColor(KTextColor.darkGray)
-        );
+        ).toAscii();
 
-        if(process.stdout.cursorTo) {
-            process.stdout.cursorTo(0);
-            process.stdout.write(msg.toPlainText() + '\n');
-        } else {
-            process.stdout.write(msg.toAscii() + '\n');
-        }
+        process.stdout.cursorTo(0);
+        process.stdout.write(msg + '\n');
     }
 
     public static log(t: string, name?: string): void;
