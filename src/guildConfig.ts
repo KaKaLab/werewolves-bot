@@ -39,6 +39,7 @@ export class BotGuildConfig {
 
         this.data = JSON.parse(fs.readFileSync(GUILD_DIR_NAME + "/" + this.id + "/" + CONFIG_FILE_NAME).toString());
         this.data = {
+            // The field is used when announcing from console
             gameChannel: "",
             minPlayers: 6,
             maxPlayers: 12,
