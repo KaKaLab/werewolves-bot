@@ -1746,15 +1746,6 @@ export class Werewolves {
 
         this.assignRoles();
 
-        console.log(this.players.map(p => {
-            return {
-                number: p.number,
-                alive: p.alive,
-                tag: p.member.user.username + "#" + p.member.user.discriminator,
-                role: Role.getName(p.role)
-            };
-        }));
-
         this.players.forEach(p => {
             let suffix = "";
             if(p.role == Role.WEREWOLVES) {
