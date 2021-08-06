@@ -4,6 +4,7 @@ import { BotConfig } from './config';
 import { Werewolves } from './game/werewolves';
 import { Logger } from './utils/logger';
 import { CommandOptionType, SlashPatch } from './utils/slash';
+import * as util from "util";
 
 export class WerewolvesBot {
     public api: Client;
@@ -13,7 +14,10 @@ export class WerewolvesBot {
 
     private games: Werewolves[] = [];
 
+    public static instance: WerewolvesBot;
+
     constructor() {
+        WerewolvesBot.instance = this;
         this.config = new BotConfig();
         this.api = new Client({
             partials: ["MESSAGE", "CHANNEL"]
@@ -53,11 +57,34 @@ export class WerewolvesBot {
             }
         });
 
+        let running = false;
+
         this.api.on("interactionCreate", async (ev) => {
             if(ev.type != 2) return;
+            if(running) {
+                // @ts-ignore
+                const api: any = this.api.api;
+                await api.interactions(ev.id, ev.token).callback.post({
+                    data: {
+                        type: 4,
+                        data: {
+                            flags: 64,
+                            embeds: [
+                                {
+                                    ...this.getEmbedBase(),
+                                    description: "正在進行其他指令，無法使用。"
+                                }
+                            ]
+                        }
+                    }
+                }).catch(this.failedToSendMessage("cmd-other-running"));
+                return;
+            }
+
             if(ev.data.name == "wolf") {
                 const data = ev.data;
                 if(data.options[0].name == "summon") {
+                    running = true;
                     let game = this.games.find(g => g.guildId == ev.guild_id);
                     if(!game) {
                         Logger.info("Game not exist for guild " + ev.guild_id + ", creating it...");
@@ -70,7 +97,7 @@ export class WerewolvesBot {
                     if(game.inProgress) {
                         // @ts-ignore
                         const api: any = this.api.api;
-                        api.interactions(ev.id, ev.token).callback.post({
+                        await api.interactions(ev.id, ev.token).callback.post({
                             type: 4,
                             data: {
                                 embeds: [
@@ -80,16 +107,61 @@ export class WerewolvesBot {
                                     }
                                 ]
                             }
-                        });
+                        }).catch(this.failedToSendMessage("cmd-game-in-progress"));
                     } else {
-                        game.cleanGameMessages();
-                        game.showLobby(ev);
+                        await game.cleanGameMessages();
+                        await game.showLobby(ev);
                     }
+                    running = false;
+                    return;
+                }
+
+                if(data.options[0].name == "credit") {
+                    // @ts-ignore
+                    const api: any = this.api.api;
+                    await api.interactions(ev.id, ev.token).callback.post({
+                        type: 4,
+                        data: {
+                            embeds: [
+                                {
+                                    ...this.getEmbedBase(),
+                                    fields: [
+                                        {
+                                            name: "開發人員",
+                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    }).catch(this.failedToSendMessage("cmd-credit"));
+                    return;
                 }
             }
         });
 
         this.api.login(this.config.getToken());
+    }
+
+    public failedToSendMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to send " + name + " message");
+            console.log(ex);
+        };
+    }
+
+    public failedToEditMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to edit " + name + " message");
+            console.log(ex);
+        };
+    }
+
+    public failedToDeleteMessage(name: string) {
+        return (ex: any) => {
+            Logger.error("Failed to delete " + name + " message");
+            console.log(ex);
+        };
     }
 
     public async registerSlashCommands() {
@@ -127,12 +199,27 @@ export class WerewolvesBot {
     public async acceptConsoleInput(input: string) {
         if(!this.canAcceptConsoleInput) return;
 
-        if(input.trim() == "reload") {
+        if(input.trim().split(" ")[0] == "reload") {
             Logger.info("Reloading...");
             this.reload();
         }
 
-        if(input.trim() == "exit") {
+        if(input.trim().split(" ")[0] == "dump" && input.length >= 6) {
+            let obj = input.trim().split(" ")[1];
+            if(!obj) return;
+            if(!obj.startsWith("$")) return;
+            if(obj.length > 1 && obj[1] != ".") return;
+            obj = obj.substring(1);
+
+            try {
+                const target = eval("WerewolvesBot.instance" + obj);
+                Logger.info(util.inspect(target, false, null, true));
+            } catch(ex) {
+                Logger.error("Failed to dump");
+            }
+        }
+
+        if(input.trim().split(" ")[0] == "exit") {
             await this.exit();
         }
     }

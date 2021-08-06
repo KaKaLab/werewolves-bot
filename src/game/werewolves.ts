@@ -186,7 +186,7 @@ export class Werewolves {
                         ]
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("lobby-ephemeral"));
         }
 
         switch(ev.data.custom_id) {
@@ -229,7 +229,7 @@ export class Werewolves {
                 type: 7,
                 data: this.getLobbyMessage()
             }
-        });
+        }).catch(this.bot.failedToSendMessage("lobby"));
 
         if(!!this.appId) {
             this.threadChannel = ev.message.id;
@@ -311,7 +311,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.WEREWOLVES)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-werewolves"));
             return;
         }
         if(!player.alive) {
@@ -320,7 +320,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("werewolves-dead"));
             return;
         }
         
@@ -345,11 +345,11 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("werewolves-killed"));
 
         // @ts-ignore
         rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("werewolves-source"));
 
         await this.turnOfSeer();    
     }
@@ -376,7 +376,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.SEER)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-seer"));
             return;
         }
         if(!player.alive) {
@@ -385,7 +385,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("seer-dead"));
             return;
         }
         
@@ -412,11 +412,11 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("seer-inspected"));
 
         // @ts-ignore
         rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("seer-source"));
 
         this.turnOfWitchA();    
     }
@@ -440,7 +440,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.WITCH)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-witch"));
             return;
         }
         if(!player.alive) {
@@ -449,7 +449,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("witch-dead"));
             return;
         }
 
@@ -469,7 +469,7 @@ export class Werewolves {
                         flags: 64
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("witch-inspect-killer"));
 
             return;
         }
@@ -487,11 +487,11 @@ export class Werewolves {
                         flags: 64
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("witch-skip"));
 
             // @ts-ignore
             rest = this.bot.api.api;
-            await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete();
+            await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete().catch(this.bot.failedToDeleteMessage("witch-source"));
 
             this.turnOfDaylight("女巫請閉眼。");
         } else {
@@ -511,7 +511,7 @@ export class Werewolves {
                             ]
                         }
                     }
-                });
+                }).catch(this.bot.failedToSendMessage("witch-skill-exhaust"));
                 return;
             }
 
@@ -533,7 +533,7 @@ export class Werewolves {
                         flags: 64
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("witchB"));
         }
     }
 
@@ -556,7 +556,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.WITCH)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-witch"));
             return;
         }
         if(!player.alive) {
@@ -565,7 +565,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("witch-dead"));
             return;
         }
 
@@ -590,7 +590,7 @@ export class Werewolves {
                 type: 4,
                 data: {
                     flags: 64,
-                    embed: [
+                    embeds: [
                         {
                             ...this.getEmbedBase(),
                             description: `你選擇對 <@${p.member.id}> ${type}。`
@@ -598,7 +598,7 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("witch-action"));
 
         // @ts-ignore
         rest = this.bot.api.api;
@@ -633,7 +633,7 @@ export class Werewolves {
                         ]
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("discuss-ephemeral"));
         }
         const player = this.players.find(p => p.member.id == userId);
         if(!player) {
@@ -646,7 +646,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("discuss-dead"));
             return;
         }
 
@@ -656,7 +656,7 @@ export class Werewolves {
         
         switch(key) {
             case "vote":
-                rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+                rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("discuss-source-a"));
                 this.voteLimit = this.players.length;
                 this.votes = [];
                 Array.prototype.push.apply(this.votes, this.players);
@@ -672,11 +672,11 @@ export class Werewolves {
                             type: 4,
                             data: this.getRoleMismatchMessage(Role.KNIGHT)
                         }
-                    });
+                    }).catch(this.bot.failedToSendMessage("discuss-not-knight"));
                     return;
                 }
 
-                rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+                rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("discuss-source-b"));
                 
                 // @ts-ignore
                 rest = this.bot.api.api;
@@ -685,7 +685,7 @@ export class Werewolves {
                         type: 4,
                         data: this.getKnightMessage()
                     }
-                });
+                }).catch(this.bot.failedToSendMessage("discuss-knight"));
 
                 this.state = GameState.KNIGHT;
                 Logger.log("state (" + this.guildId + ") -> knight");
@@ -715,7 +715,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.KNIGHT)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-knight"));
             return;
         }
         if(!player.alive) {
@@ -724,7 +724,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("knight-dead"));
             return;
         }
         
@@ -752,11 +752,11 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("knight-result"));
 
         // @ts-ignore
         rest = this.bot.api.api;
-        rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+        rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("knight-source"));
 
         this.turnOfWerewolves();    
     }
@@ -780,7 +780,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getRoleMismatchMessage(Role.HUNTER)
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("not-hunter"));
             return;
         }
         
@@ -805,11 +805,11 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("hunter-killed"));
 
         // @ts-ignore
         rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
+        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("hunter-source"));
 
         await this.checkEndOrNext(() => {
             this.hunterNext();
@@ -841,8 +841,9 @@ export class Werewolves {
                         ]
                     }
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("vote-ephemeral"));
         }
+
         const player = this.players.find(p => p.member.id == userId);
         if(!player) {
             sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
@@ -854,7 +855,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getPlayerDeadInvalidMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("vote-dead"));
             return;
         }
 
@@ -876,7 +877,7 @@ export class Werewolves {
                 type: 7,
                 data: this.getVoteMessage()
             }
-        });
+        }).catch(this.bot.failedToEditMessage("vote-result"));
     }
 
     private getRoleMismatchMessage(role: Role) {
@@ -911,7 +912,7 @@ export class Werewolves {
             const api: any = this.bot.api.api;
             api.channels(this.threadChannel!!).messages.post({
                 data: this.getSeerMessage()
-            });
+            }).catch(this.bot.failedToSendMessage("seer-turn"));
         } else {
             this.turnOfWitchA();
         }
@@ -930,7 +931,7 @@ export class Werewolves {
 
             const r = await api.channels(this.threadChannel!!).messages.post({
                 data: this.getWitchMessageA(prefix)
-            });
+            }).catch(this.bot.failedToSendMessage("witch-turn-a"));
             this.witchAMsgId = r.id;
             Logger.info("WitchA msg id -> " + this.witchAMsgId);
         } else {
@@ -992,7 +993,7 @@ export class Werewolves {
                     ],
                     components: this.getHunterComponents()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("hunter-turn"));
             this.hunterNext = next;
         } else {
             this.checkEndOrNext(next);
@@ -1022,7 +1023,7 @@ export class Werewolves {
                 ],
                 components: this.getDiscussComponents()
             }
-        });
+        }).catch(this.bot.failedToSendMessage("discuss-turn"));
 
         this.currentTimeout = setTimeout(() => {
             // @ts-ignore
@@ -1031,7 +1032,7 @@ export class Werewolves {
                 data: {
                     components: this.getDiscussComponents(true)
                 }
-            });
+            }).catch(this.bot.failedToEditMessage("discuss-enable-vote"));
         }, discussTime * 1000);
     }
 
@@ -1056,7 +1057,7 @@ export class Werewolves {
 
         const r = await api.channels(this.threadChannel!!).messages.post({
             data: this.getVoteMessage(appendEmbeds)
-        });
+        }).catch(this.bot.failedToSendMessage("vote-turn"));
         this.voteMsgId = r.id;
 
         this.currentTimeout = setTimeout(() => {
@@ -1087,7 +1088,7 @@ export class Werewolves {
                         }
                     ]
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("vote-transition-night"));
             this.turnOfWerewolves();
             return;
         }
@@ -1121,7 +1122,7 @@ export class Werewolves {
                     }
                 ]
             }
-        });
+        }).catch(this.bot.failedToSendMessage("vote-down-max"));
         this.votes[0].kill();
 
         this.turnOfHunter("", () => {
@@ -1711,7 +1712,7 @@ export class Werewolves {
             Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
             const r = await api.channels(this.gameChannel!!.id).messages.post({
                 data: this.getLobbyMessage()
-            });
+            }).catch(this.bot.failedToSendMessage("lobby-renew-game"));
             this.threadChannel = r.id;
             this.appId = null;
             this.interactionToken = null;
@@ -1722,7 +1723,7 @@ export class Werewolves {
                     type: 4,
                     data: this.getLobbyMessage()
                 }
-            });
+            }).catch(this.bot.failedToSendMessage("lobby-cmd-interaction"));
             this.threadChannel = null;
             this.appId = interaction.application_id;
             this.interactionToken = interaction.token;
@@ -1804,7 +1805,7 @@ export class Werewolves {
                     ]
                 }
             }
-        });
+        }).catch(this.bot.failedToSendMessage("lobby-patch-playing"));
 
         // Create a thread from the lobby message
         // @ts-ignore
