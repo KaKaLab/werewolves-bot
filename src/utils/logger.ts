@@ -32,12 +32,10 @@ export class Logger {
             LiteralText.of(new Date().toISOString()).setColor(KTextColor.darkGray)
         ).toAscii();
 
-        if(process.stdout) {
+        if(process.stdout.cursorTo) {
             process.stdout.cursorTo(0);
-            process.stdout.write(msg + '\n');
-        } else {
-            console.log(msg);
         }
+        process.stdout.write(msg + '\n');
     }
 
     public static log(t: string, name?: string): void;
