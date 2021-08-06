@@ -108,7 +108,7 @@ export class Werewolves {
             if(ev.guild_id != this.guildId) return;
             if(ev.type != 3) return;
 
-            Logger.log(`Interaction issuer: ${ev.member.user.username} (in guild ${ev.guild_id})`);
+            Logger.log(`Interaction issuer: ${ev.member.user.username}#${ev.member.user.discriminator} (in guild ${ev.guild_id})`);
 
             if(this.state == GameState.READY) {
                 Logger.log(`interaction (${this.guildId}) -> state: ready`);
