@@ -1,5 +1,6 @@
 import { Client, Guild, GuildChannel, GuildMember, TextChannel, KInteractionWS } from "discord.js";
 import { WerewolvesBot } from "../bot";
+import { BotGuildConfig } from "../guildConfig";
 import { Logger } from "../utils/logger";
 
 export enum Role {
@@ -70,20 +71,22 @@ export class Werewolves {
     public state: GameState = GameState.READY;
     private bot: WerewolvesBot;
 
-    private gameChannel: PlayableChannel | null = null;
-    private threadChannel: string | null = null;
-    private hasThread = false;
+    public guildId: string;
+    private config: BotGuildConfig;
 
-    private static MIN_PLAYERS: number;
-    private static MAX_PLAYERS: number;
+    private gameChannel: PlayableChannel | null = null;
+
+    private threadChannel: string | null = null;
+    private appId: string | null = null;
+    private interactionToken: string | null = null;
+    
+    private hasThread = false;
 
     private wolvesKilled = -1;
     private witchTarget = -1;
     private votedDown = -1;
     private witchAction: string | null = null;
     private voteLimit = -1;
-
-    private knightAction = false;
 
     private voteQuote = "";
     private discussMsgId = null;
@@ -98,6 +101,8 @@ export class Werewolves {
     private readonly debugVoteOnly = false;
     private readonly debugShortTime = true;
 
+    public inProgress = false;
+
     private witchRemainSkills = {
         kill: 1,
         save: 1
@@ -105,21 +110,14 @@ export class Werewolves {
 
     private witchAMsgId: string | null = null;
 
-    constructor(bot: WerewolvesBot) {
+    constructor(bot: WerewolvesBot, guild: string) {
         this.bot = bot;
-        this.loadConfig();
-
-        const api = bot.api;
-        const chn = api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!.channels.cache.get(this.bot.config.getGameChannel());
-        if(chn instanceof TextChannel) {
-            this.gameChannel = chn;
-        }
+        this.guildId = guild;
+        this.config = new BotGuildConfig(guild);
     }
 
     public loadConfig() {
-        Werewolves.MIN_PLAYERS = this.bot.config.getMinPlayers();
-        Werewolves.MAX_PLAYERS = this.bot.config.getMaxPlayers();
-        Logger.log(`min, max = ${Werewolves.MIN_PLAYERS}, ${Werewolves.MAX_PLAYERS}`);
+        this.config.load();
     }
 
     public isMemberInGame(id: string) {
@@ -128,55 +126,58 @@ export class Werewolves {
 
     public async init() {
         this.bot.api.on("interactionCreate", async (ev) => {
+            if(ev.guild_id != this.guildId) return;
+            if(ev.type != 3) return;
+
             if(this.state == GameState.READY) {
-                Logger.log("interaction -> state: ready");
+                Logger.log(`interaction (${this.guildId}) -> state: ready`);
                 await this.handleLobbyInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.WEREWOLVES) {
-                Logger.log("interaction -> state: werewolves");
+                Logger.log(`interaction (${this.guildId}) -> state: werewolves`);
                 await this.handleWerewolvesInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.SEER) {
-                Logger.log("interaction -> state: seer");
+                Logger.log(`interaction (${this.guildId}) -> state: seer`);
                 await this.handleSeerInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.WITCH) {
                 if(ev.message.id == this.witchAMsgId) {
-                    Logger.log("interaction -> state: witch_a");
+                    Logger.log(`interaction (${this.guildId}) -> state: witchA`);
                     await this.handleWitchInteractionA(ev);
                 } else {
-                    Logger.log("interaction -> state: witch_b");
+                    Logger.log(`interaction (${this.guildId}) -> state: witchB`);
                     await this.handleWitchInteractionB(ev);
                 }
                 return;
             }
 
             if(this.state == GameState.DISCUSS) {
-                Logger.log("interaction -> state: discuss");
+                Logger.log(`interaction (${this.guildId}) -> state: discuss`);
                 await this.handleDiscussInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.KNIGHT) {
-                Logger.log("interaction -> state: knight");
+                Logger.log(`interaction (${this.guildId}) -> state: knight`);
                 await this.handleKnightInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.HUNTER) {
-                Logger.log("interaction -> state: hunter");
+                Logger.log(`interaction (${this.guildId}) -> state: hunter`);
                 await this.handleHunterInteraction(ev);
                 return;
             }
 
             if(this.state == GameState.VOTE) {
-                Logger.log("interaction -> state: vote");
+                Logger.log(`interaction (${this.guildId}) -> state: vote`);
                 await this.handleVoteInteraction(ev);
                 return;
             }
@@ -187,7 +188,7 @@ export class Werewolves {
 
     private async handleLobbyInteraction(ev: KInteractionWS) {
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         var sendEphemeralEmbed = (desc: string) => {
@@ -211,7 +212,7 @@ export class Werewolves {
 
         switch(ev.data.custom_id) {
             case "game_join":
-                if(this.players.length >= Werewolves.MAX_PLAYERS) {
+                if(this.players.length >= this.config.getMaxPlayers()) {
                     sendEphemeralEmbed("人數已滿，無法再加入。");
                     return;
                 }
@@ -240,7 +241,7 @@ export class Werewolves {
 
                 const msgId = ev.message.id;
                 const api = this.bot.api;
-                const chn = api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!.channels.cache.get(this.bot.config.getGameChannel()) as PlayableChannel;
+                const chn = api.guilds.cache.get(this.guildId)!!.channels.cache.get(this.config.getGameChannel()) as PlayableChannel;
                 const msg = await chn.messages.fetch(msgId);
 
                 this.assignRoles();
@@ -338,6 +339,8 @@ export class Werewolves {
                     }
                 }, 10000);
 
+                this.inProgress = true;
+
                 break;
         }
 
@@ -349,6 +352,12 @@ export class Werewolves {
                 data: this.getLobbyMessage()
             }
         });
+
+        if(!!this.appId) {
+            this.threadChannel = ev.message.id;
+            this.appId = null;
+            this.interactionToken = null;
+        }
     }
 
     public getWerewolves(): WPlayer[] {
@@ -409,7 +418,7 @@ export class Werewolves {
         if(ev.data.custom_id != "werewolves_kill") return;
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -474,7 +483,7 @@ export class Werewolves {
         }
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -538,7 +547,7 @@ export class Werewolves {
         if(!ev.data.custom_id.startsWith("witch_")) return;
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -654,7 +663,7 @@ export class Werewolves {
         if(!ev.data.custom_id.startsWith("witch_")) return;
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -789,8 +798,6 @@ export class Werewolves {
                     return;
                 }
 
-                this.knightAction = true;
-
                 rest.channels(this.threadChannel!!).messages(ev.message.id).delete();
                 
                 // @ts-ignore
@@ -803,7 +810,7 @@ export class Werewolves {
                 });
 
                 this.state = GameState.KNIGHT;
-                Logger.log("state -> knight");
+                Logger.log("state (" + this.guildId + ") -> knight");
                 return;
         }
     }
@@ -815,7 +822,7 @@ export class Werewolves {
         }
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -880,7 +887,7 @@ export class Werewolves {
         if(ev.data.custom_id != "hunter_target") return;
 
         const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = await guild.members.fetch(userId);
 
         // @ts-ignore
@@ -1008,7 +1015,7 @@ export class Werewolves {
 
     private async turnOfWerewolves() {
         this.state = GameState.WEREWOLVES;
-        Logger.log("state -> werewolves");
+        Logger.log("state (" + this.guildId + ") -> werewolves");
 
         // @ts-ignore
         const rest: any = this.bot.api.api;
@@ -1020,7 +1027,7 @@ export class Werewolves {
     private async turnOfSeer() {
         if(this.getSeers().find(p => p.alive)) {
             this.state = GameState.SEER;
-            Logger.log("state -> seer");
+            Logger.log("state (" + this.guildId + ") -> seer");
 
             // @ts-ignore
             const api: any = this.bot.api.api;
@@ -1041,7 +1048,7 @@ export class Werewolves {
             const prefix = this.state == GameState.WEREWOLVES ? "狼人請閉眼，" : "預言家請閉眼，";
 
             this.state = GameState.WITCH;
-            Logger.log("state -> witch");
+            Logger.log("state (" + this.guildId + ") -> witch");
 
             const r = await api.channels(this.threadChannel!!).messages.post({
                 data: this.getWitchMessageA(prefix)
@@ -1093,7 +1100,7 @@ export class Werewolves {
 
         if(hunter) {
             this.state = GameState.HUNTER;
-            Logger.log("state -> hunter");
+            Logger.log("state (" + this.guildId + ") -> hunter");
 
             // @ts-ignore
             const api: any = this.bot.api.api;
@@ -1116,7 +1123,7 @@ export class Werewolves {
 
     private async turnOfDiscuss(quote: string) {
         this.state = GameState.DISCUSS;
-        Logger.log("state -> discuss");
+        Logger.log("state (" + this.guildId + ") -> discuss");
 
         // @ts-ignore
         const api: any = this.bot.api.api;
@@ -1152,7 +1159,7 @@ export class Werewolves {
 
     private async turnOfVote(appendEmbeds: any[] = []) {
         this.state = GameState.VOTE;
-        Logger.log("state -> vote");
+        Logger.log("state (" + this.guildId + ") -> vote");
 
         // @ts-ignore
         const api: any = this.bot.api.api;
@@ -1642,16 +1649,18 @@ export class Werewolves {
     }
 
     private getEmbedBase(): any {
-        const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
+        const base = this.bot.getEmbedBase();
+
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
         const member = guild.members.cache.get(this.bot.api.user?.id!!);
 
         const dayStr = this.daysCount >= 0 ? `第 ${this.daysCount} 天` : (member?.nickname ?? this.bot.api.user?.username);
 
         return {
-            color: 0xffa970,
+            ...base,
             author: {
-                name: dayStr,
-                icon_url: this.bot.api.user?.avatarURL()
+                ...base.author,
+                name: dayStr
             }
         };
     }
@@ -1675,7 +1684,7 @@ export class Werewolves {
                 },
                 {
                     name: "人數",
-                    value: `${this.players.length} / ${Werewolves.MAX_PLAYERS}\n達到 ${Werewolves.MIN_PLAYERS} 人可開始`,
+                    value: `${this.players.length} / ${this.config.getMaxPlayers()}\n達到 ${this.config.getMinPlayers()} 人可開始`,
                     inline: true
                 }
             ]
@@ -1704,7 +1713,7 @@ export class Werewolves {
                         custom_id: "game_start",
                         style: 2,
                         label: "開始遊戲",
-                        disabled: this.players.length < Werewolves.MIN_PLAYERS
+                        disabled: this.players.length < this.config.getMinPlayers()
                     }
                 ]
             }
@@ -1802,29 +1811,59 @@ export class Werewolves {
         };
     }
 
-    public async startLobby() {
+    public async startLobby(interaction: KInteractionWS | null = null) {
+        this.prepareLobby();
+        await this.showLobby(interaction);
+    }
+
+    public prepareLobby() {
         this.state = GameState.READY;
-        Logger.log("state -> ready");
+        Logger.log("state (" + this.guildId + ") -> ready");
 
         Logger.info("Lobby started!");
-        Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
 
         this.players = [];
+    }
 
+    public async showLobby(interaction: KInteractionWS | null = null) {
         // @ts-ignore
         const api: any = this.bot.api.api;
-        const r = await api.channels(this.gameChannel!!.id).messages.post({
-            data: this.getLobbyMessage()
-        });
-        this.threadChannel = r.id;
-        this.hasThread = false;
+
+        if(!interaction) {
+            Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
+            const r = await api.channels(this.gameChannel!!.id).messages.post({
+                data: this.getLobbyMessage()
+            });
+            this.threadChannel = r.id;
+            this.appId = null;
+            this.interactionToken = null;
+        } else {
+            Logger.log("Send ready message by interaction respond");
+            await api.interactions(interaction.id, interaction.token).callback.post({
+                data: {
+                    type: 4,
+                    data: this.getLobbyMessage()
+                }
+            });
+            this.threadChannel = null;
+            this.appId = interaction.application_id;
+            this.interactionToken = interaction.token;
+
+            const bot = this.bot.api;
+            const chn = bot.guilds.cache.get(interaction.guild_id)!!.channels.cache.get(interaction.channel_id);
+            if(chn instanceof TextChannel) {
+                this.gameChannel = chn;
+                this.config.data.gameChannel = chn.id;
+                this.config.save();
+            }
+        }
     }
 
     public startGame() {
 
     }
 
-    public async cleanGame() {
+    public async cleanGameMessages() {
         // @ts-ignore
         let api: any = this.bot.api.api;
         if(this.threadChannel != null) {
@@ -1835,8 +1874,24 @@ export class Werewolves {
             // @ts-ignore
             api = this.bot.api.api;
             await api.channels(this.gameChannel!!.id).messages(this.threadChannel).delete();
+
             this.threadChannel = null;
+            this.appId = null;
+            this.interactionToken = null;
         }
+
+        if(this.appId != null && this.interactionToken != null) {
+            // @ts-ignore
+            api = this.bot.api.api;
+            await api.webhooks(this.appId, this.interactionToken).messages("@original").delete();
+
+            this.threadChannel = null;
+            this.appId = null;
+            this.interactionToken = null;
+        }
+
+        this.hasThread = false;
+        this.inProgress = false;
     }
 
     public async checkEndOrNext(next: () => void) {
@@ -1859,7 +1914,8 @@ export class Werewolves {
         this.daysCount = -1;
         // @ts-ignore
         let api: any = this.bot.api.api;
-        api.channels(this.threadChannel!!).messages.post({
+
+        const data = {
             data: {
                 embeds: [
                     {
@@ -1868,8 +1924,11 @@ export class Werewolves {
                     }
                 ]
             }
-        })
+        };
+        api.channels(this.threadChannel!!).messages.post(data);
+        api.channels(this.gameChannel!!.id).messages(this.threadChannel!!).patch(data);
         this.threadChannel = null;
+
         this.startLobby();
     }
 }

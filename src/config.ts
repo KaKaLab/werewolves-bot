@@ -15,26 +15,20 @@ export class BotConfig {
     }
 
     public load() {
+        if(!fs.existsSync(CONFIG_FILE_NAME)) {
+            fs.writeFileSync(CONFIG_FILE_NAME, "{}");
+        }
+
         this.data = JSON.parse(fs.readFileSync(CONFIG_FILE_NAME).toString());
+        this.data = {
+            token: "",
+            ...this.data
+        };
+        
+        fs.writeFileSync(CONFIG_FILE_NAME, JSON.stringify(this.data, null, 4));
     }
 
     public getToken(): string {
         return this.data.token;
-    }
-
-    public getGameChannel(): string {
-        return this.data.gameChannel;
-    }
-
-    public getGuildId(): string {
-        return this.data.guildId;
-    }
-
-    public getMaxPlayers(): number {
-        return this.data.maxPlayers;
-    }
-
-    public getMinPlayers(): number {
-        return this.data.minPlayers;
     }
 }
