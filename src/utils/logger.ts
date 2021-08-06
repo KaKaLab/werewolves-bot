@@ -27,11 +27,17 @@ export class Logger {
         if (Logger.level > level) return;
         const f = this.prefixFormat.clone();
         const tag = LiteralText.of(`[${name}]`).setColor(color);
-        process.stdout.cursorTo(0);
-        process.stdout.write(f.addWith(
+        const msg = f.addWith(
             tag, t, 
             LiteralText.of(new Date().toISOString()).setColor(KTextColor.darkGray)
-        ).toAscii() + '\n');
+        );
+
+        if(process.stdout.cursorTo) {
+            process.stdout.cursorTo(0);
+            process.stdout.write(msg.toPlainText() + '\n');
+        } else {
+            process.stdout.write(msg.toAscii() + '\n');
+        }
     }
 
     public static log(t: string, name?: string): void;

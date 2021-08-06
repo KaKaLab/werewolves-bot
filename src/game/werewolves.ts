@@ -43,15 +43,15 @@ export class WPlayer {
 }
 
 export class Werewolves {
-    private players: WPlayer[] = []
+    public players: WPlayer[] = []
     private votes: WPlayer[] = []
     public state: GameState = GameState.READY;
     private bot: WerewolvesBot;
 
     public guildId: string;
-    private config: BotGuildConfig;
+    public config: BotGuildConfig;
 
-    private gameChannel: PlayableChannel | null = null;
+    public gameChannel: PlayableChannel | null = null;
 
     private threadChannel: string | null = null;
     private appId: string | null = null;
@@ -75,6 +75,7 @@ export class Werewolves {
     private daysCount = -1;
 
     public inProgress = false;
+    public startTime = new Date();
 
     private witchRemainSkills = {
         kill: 1,
@@ -217,9 +218,9 @@ export class Werewolves {
                     return;
                 }
                 if(this.inProgress) return;
-                this.startGame(ev);    
 
-                break;
+                this.startGame(ev);  
+                return;
         }
 
         // @ts-ignore
@@ -1141,42 +1142,28 @@ export class Werewolves {
         var priestCount = ((b + 1) / 9) | 0;
         var counter = 0;
 
-        const seerCount = 1;
-        const witchCount = 1;
-        const hunterCount = 1;
-        const werewolvesCount = ((b / 3) | 0);
+        const settings = this.config.getRoleMaxPlayers();
+        const seerCount = settings.seer;
+        const witchCount = settings.witch;
+        const hunterCount = settings.hunter;
+        const knightCount = settings.knight;
+        const werewolvesCount = settings.werewolves;
+        const knightThreshold = this.config.getKnightThreshold();
 
         let maxRole = seerCount;
         maxRole += witchCount;
         maxRole += hunterCount;
         maxRole += werewolvesCount;
-        if(b > 6) maxRole++;
-
-        var failSafe = 0;
-
-        var failSafeCall = () => {
-            failSafe++;
-            if(failSafe >= 400) {
-                console.log("b:", b);
-                console.log("maxRole:", maxRole);
-                console.log("roleCount:", roleCount);
-                return false;
-            }
-            return true;
-        }
+        if(b > knightThreshold) maxRole += knightCount;
         
-        while (counter < b) {
-            const r = Math.floor(Role.COUNT * Math.random());
-            const e = Math.floor(Math.random() * b);
-            const p = this.players[e];
-            var role = Role.INNOCENT;
+        while (counter < maxRole) {
+            const innocents = this.players.filter(p => p.role == Role.INNOCENT);
+            const r = Math.floor((Role.COUNT - 1) * Math.random());
+            const e = Math.floor(Math.random() * innocents.length);
+            const p = innocents[e];
+            if(!p) break;
 
-            if(p.role != Role.INNOCENT) {
-                if(!failSafeCall()) {
-                    break;   
-                }
-                continue;
-            }
+            var role = Role.INNOCENT;
 
             if(r == Role.SEER && roleCount[Role.SEER] < seerCount) {
                 role = Role.SEER;
@@ -1184,16 +1171,11 @@ export class Werewolves {
                 role = Role.WITCH;
             } else if(r == Role.HUNTER && roleCount[Role.HUNTER] < hunterCount) {
                 role = Role.HUNTER;
-            } else if(r == Role.KNIGHT && b > 6 && roleCount[Role.KNIGHT] < 1) {
+            } else if(r == Role.KNIGHT && b > knightThreshold && roleCount[Role.KNIGHT] < knightCount) {
                 role = Role.KNIGHT;
             } else if(r == Role.WEREWOLVES && roleCount[Role.WEREWOLVES] < werewolvesCount) {
                 role = Role.WEREWOLVES;
-            } else if(r == Role.INNOCENT && roleCount[Role.INNOCENT] < b - maxRole) {
-                role = Role.INNOCENT;
             } else {
-                if(!failSafeCall()) {
-                    break;   
-                }
                 continue;
             }
 
@@ -1696,12 +1678,11 @@ export class Werewolves {
     }
 
     public prepareLobby() {
-        this.state = GameState.READY;
         Logger.log("state (" + this.guildId + ") -> ready");
 
         Logger.info("Lobby started!");
 
-        this.players = [];
+        this.loadConfig();
     }
 
     public async showLobby(interaction: KInteractionWS | null = null) {
@@ -1740,6 +1721,7 @@ export class Werewolves {
 
     public async startGame(ev: KInteractionWS) {
         this.inProgress = true;
+        this.startTime = new Date();
 
         const msgId = ev.message.id;
         const api = this.bot.api;
@@ -1798,7 +1780,7 @@ export class Werewolves {
                     ]
                 }
             }
-        }).catch(this.bot.failedToSendMessage("lobby-patch-playing"));
+        }).catch(this.bot.failedToEditMessage("lobby-patch-playing"));
 
         // Create a thread from the lobby message
         // @ts-ignore
@@ -1822,7 +1804,9 @@ export class Werewolves {
         this.daysCount = 0;
 
         this.currentTimeout = setTimeout(() => {
-            this.turnOfWerewolves();
+            this.checkEndOrNext(() => {
+                this.turnOfWerewolves();
+            });
         }, 10000);
     }
 
@@ -1854,7 +1838,6 @@ export class Werewolves {
         }
 
         this.hasThread = false;
-        this.inProgress = false;
     }
 
     public async checkEndOrNext(next: () => void) {
@@ -1871,31 +1854,52 @@ export class Werewolves {
             return;
         }
 
+        await this.stopGame(gameMsg);
+    }
+
+    public async stopGame(message: string) {
+        if(this.currentTimeout) {
+            clearTimeout(this.currentTimeout);
+        }
+
         this.daysCount = -1;
-        // @ts-ignore
-        let api: any = this.bot.api.api;
 
         const data = {
             data: {
                 embeds: [
                     {
                         ...this.getEndGameEmbed(),
-                        description: gameMsg
+                        description: message
                     }
-                ]
+                ],
+                components: []
             }
         };
-        api.channels(this.threadChannel!!).messages.post(data);
-        api.channels(this.gameChannel!!.id).messages(this.threadChannel!!).patch(data);
+        // @ts-ignore
+        let api: any = this.bot.api.api;
+        api.channels(this.threadChannel!!).messages.post(data).catch(this.bot.failedToSendMessage("end-game-in-thread"));
+        
+        const dateStr = new Date().toISOString().replace(/(?=.*?)T/, " ").replace(/(?=.*?)\..*/, "").replace(/:/g, "-");
+        // @ts-ignore
+        api = this.bot.api.api;
+        api.channels(this.threadChannel!!).patch({
+            data: {
+                name: "狼人殺遊戲紀錄：" + dateStr,
+                archived: true,
+                locked: true
+            }
+        })
+        
+        // @ts-ignore
+        api = this.bot.api.api;
+        api.channels(this.gameChannel!!.id).messages(this.threadChannel!!).patch(data).catch(this.bot.failedToSendMessage("end-game-in-history"));
         this.threadChannel = null;
+        this.inProgress = false;
+        this.players = [];
+        this.state = GameState.READY;
 
-        this.startLobby();
-    }
-
-    public async stopGame() {
-        if(this.currentTimeout) {
-            clearTimeout(this.currentTimeout);
-        }
+        // Users likely don't expect the bot to start again automatically,
+        // so we don't do that from now
     }
 
     // -- Dump --
