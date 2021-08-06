@@ -205,15 +205,18 @@ export class WerewolvesBot {
         }
 
         if(input.trim().split(" ")[0] == "dump" && input.length >= 6) {
-            let objs = input.trim().split(" ", 3);
+            let objs = input.trim().split(" ");
             if(objs.length < 3) return;
 
             try {
                 const depth = parseInt(objs[1]);
                 if(isNaN(depth)) throw new Error();
-                
-                let obj = objs[2];
-                if(!obj) return;
+
+                objs.shift();
+                objs.shift();
+
+                let obj = objs.join(" ");
+                if(objs.length == 0) return;
 
                 if(!obj.startsWith("$")) return;
                 if(obj.length > 1 && obj[1] != ".") return;
@@ -224,6 +227,7 @@ export class WerewolvesBot {
                     Logger.info(util.inspect(target, false, depth, true));
                 } catch(ex) {
                     Logger.error("Failed to dump");
+                    Logger.error(ex.toString());
                 }
             } catch(ex) {
                 Logger.error(`depth "${objs[0]}" is not a number`);
