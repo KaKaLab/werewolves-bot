@@ -5,6 +5,14 @@ import { Logger } from './utils/logger';
 const CONFIG_FILE_NAME: string = 'config.json';
 const GUILD_DIR_NAME: string = 'guild_data';
 
+type RoleMaxPlayersStruct = {
+    seer: number,
+    witch: number,
+    hunter: number,
+    knight: number,
+    werewolves: number
+};
+
 export class BotGuildConfig {
     public data: any;
     public id: string;
@@ -35,10 +43,34 @@ export class BotGuildConfig {
             minPlayers: 6,
             maxPlayers: 12,
             debugShortTime: false,
+            roleMaxPlayers: {
+                seer: 1,
+                witch: 1,
+                hunter: 1,
+                knight: 1,
+                werewolves: 2,
+            },
+            knightThreshold: 6,
+            version: 0,
             ...this.data
         };
         
+        this.upgrade();
         this.save();
+    }
+
+    public upgrade() {
+        
+    }
+
+    public getRoleMaxPlayers(): RoleMaxPlayersStruct {
+        return {
+            ...this.data.roleMaxPlayers
+        };
+    }
+
+    public getKnightThreshold(): number {
+        return this.data.knightThreshold;
     }
 
     public save() {

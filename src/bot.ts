@@ -1,7 +1,7 @@
 import { DMChannel, Guild, Message } from 'discord.js';
 import { Client } from 'discord.js';
 import { BotConfig } from './config';
-import { Werewolves } from './game/werewolves';
+import { GameState, Werewolves } from './game/werewolves';
 import { Logger } from './utils/logger';
 import { CommandOptionType, SlashPatch } from './utils/slash';
 import * as util from "util";
@@ -83,7 +83,9 @@ export class WerewolvesBot {
 
             if(ev.data.name == "wolf") {
                 const data = ev.data;
-                if(data.options[0].name == "summon") {
+                const sub = data.options[0];
+
+                if(sub.name == "summon") {
                     running = true;
                     let game = this.games.find(g => g.guildId == ev.guild_id);
                     if(!game) {
@@ -116,27 +118,135 @@ export class WerewolvesBot {
                     return;
                 }
 
-                if(data.options[0].name == "credit") {
+                if(sub.name == "credit") {
                     // @ts-ignore
                     const api: any = this.api.api;
                     await api.interactions(ev.id, ev.token).callback.post({
-                        type: 4,
                         data: {
-                            embeds: [
-                                {
-                                    ...this.getEmbedBase(),
-                                    fields: [
-                                        {
-                                            name: "開發人員",
-                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
-                                        }
-                                    ]
-                                }
-                            ]
+                            type: 4,
+                            data: {
+                                embeds: [
+                                    {
+                                        ...this.getEmbedBase(),
+                                        fields: [
+                                            {
+                                                name: "開發人員",
+                                                value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
                         }
                     }).catch(this.failedToSendMessage("cmd-credit"));
                     return;
                 }
+
+                if(sub.name == "stop-the-game-for-sure-plz") {
+                    var sendEmbed = async (message: string) => {
+                        // @ts-ignore
+                        const api: any = this.api.api;
+                        await api.interactions(ev.id, ev.token).callback.post({
+                            data: {
+                                type: 4,
+                                data: {
+                                    flags: 64,
+                                    embeds: [
+                                        {
+                                            ...this.getEmbedBase(),
+                                            description: message
+                                        }
+                                    ]
+                                }
+                            }
+                        }).catch(this.failedToSendMessage("cmd-force-stop-result"));
+                    };
+
+                    const game = this.games.find(g => g.guildId == ev.guild_id);
+                    if(game && game.inProgress) {
+                        const userId = ev.member.user.id;
+                        if(game.players.find(p => p.member.id == userId)) {
+                            game.stopGame(`<@${userId}> 強制停止了這場遊戲。`);
+                            sendEmbed("你強制停止了這場遊戲。");
+                            return;
+                        } else {
+                            sendEmbed("你並非這場遊戲的玩家。");
+                            return;
+                        }
+                    }
+                    sendEmbed("遊戲不存在。");
+                    return;
+                }
+
+                if(sub.name == "settings") {
+                    const action = sub.options[0];
+                    const key = action.options[0];
+                    const value = action.options[1];
+
+                    let game = this.games.find(g => g.guildId == ev.guild_id);
+                    if(!game) {
+                        game = new Werewolves(this, ev.guild_id);
+                        await game.init();
+                        game.prepareLobby();
+                        this.games.push(game);
+                    }
+
+                    const run = function () {
+                        const isStr = typeof eval("this." + key.value) == "string";
+                        if(action.name == "set") {
+                            if(value.value.match(/[\(\)\[\]]/)) {
+                                Logger.warn("Possibly malicious value in setting: " + value.value)
+                                throw new Error();
+                            }
+
+                            eval(`this.${key.value} = ${isStr ? '"' : ""}${value.value}${isStr ? '"' : ""};`);
+                        }
+                        return eval("this." + key.value);
+                    };
+                    try {
+                        const result = run.call(game.config.data);
+                        if(action.name == "set") {
+                            game.config.save();
+                        }
+
+                        // @ts-ignore
+                        const api: any = this.api.api;
+                        await api.interactions(ev.id, ev.token).callback.post({
+                            data: {
+                                type: 4,
+                                data: {
+                                    embeds: [
+                                        {
+                                            ...this.getEmbedBase(),
+                                            description: `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name == "set" ? "\n該設定會在下回合生效。" : "")
+                                        }
+                                    ]
+                                }
+                            }
+                        }).catch(this.failedToSendMessage("cmd-settings-result"));
+                    } catch(ex) {
+                        // @ts-ignore
+                        const api: any = this.api.api;
+                        await api.interactions(ev.id, ev.token).callback.post({
+                            data: {
+                                type: 4,
+                                data: {
+                                    flags: 64,
+                                    embeds: [
+                                        {
+                                            ...this.getEmbedBase(),
+                                            description: "設定該選項的值的時候發生錯誤。"
+                                        }
+                                    ]
+                                }
+                            }
+                        }).catch(this.failedToSendMessage("cmd-settings-error"));
+                    }
+                    return;
+                }
+
+                console.log(ev.data.options[0]);
+                return;
             }
         });
 
@@ -151,6 +261,21 @@ export class WerewolvesBot {
 
     public async registerGuildSlashCommands(guild: Guild) {
         Logger.log(`Registering command for guild: ${guild.name} (${guild.id})`);
+        const settingOptions = [
+            "roleMaxPlayers.seer",
+            "roleMaxPlayers.witch",
+            "roleMaxPlayers.hunter",
+            "roleMaxPlayers.knight",
+            "roleMaxPlayers.werewolves",
+            "maxPlayers", "minPlayers", "knightThreshold",
+            "debugShortTime"
+        ].map(v => {
+            return {
+                name: v,
+                value: v
+            };
+        });
+
         const commands: any = [
             {
                 name: "wolf",
@@ -165,6 +290,52 @@ export class WerewolvesBot {
                         name: "credit",
                         description: "想了解那些辛苦對抗各種 Bug 的開發人員嗎！！！！",
                         type: CommandOptionType.SUB_COMMAND
+                    },
+                    {
+                        name: "stop-the-game-for-sure-plz",
+                        description: "超長的指令，如果有特殊原因需要重開遊戲，你會需要它。",
+                        type: CommandOptionType.SUB_COMMAND
+                    },
+                    {
+                        name: "settings",
+                        description: "設定相關的指令。",
+                        type: CommandOptionType.SUB_COMMAND_GROUP,
+                        options: [
+                            {
+                                name: "set",
+                                description: "設定選項的值。",
+                                type: CommandOptionType.SUB_COMMAND,
+                                options: [
+                                    {
+                                        name: "key",
+                                        description: "設定的選項名稱。",
+                                        type: CommandOptionType.STRING,
+                                        choices: settingOptions,
+                                        required: true
+                                    },
+                                    {
+                                        name: "value",
+                                        description: "選項的值。",
+                                        type: CommandOptionType.STRING,
+                                        required: true
+                                    }
+                                ]
+                            },
+                            {
+                                name: "get",
+                                description: "取得選項的值。",
+                                type: CommandOptionType.SUB_COMMAND,
+                                options: [
+                                    {
+                                        name: "key",
+                                        description: "設定的選項名稱。",
+                                        type: CommandOptionType.STRING,
+                                        choices: settingOptions,
+                                        required: true
+                                    }
+                                ]
+                            }
+                        ]
                     }
                 ]
             }
@@ -216,6 +387,25 @@ export class WerewolvesBot {
             } catch(ex) {
                 Logger.error(`depth "${objs[0]}" is not a number`);
             }
+        }
+
+        if(input.trim().split(" ")[0] == "announce") {
+            const objs = input.trim().split(" ");
+            objs.shift();
+
+            let msg = objs.join(" ");
+            if(msg.trim() == "") msg = "狼人殺機器人將重啟進行更新！造成不便請見諒QQ";
+            
+            this.games.forEach(game => {
+                game.gameChannel?.send({
+                    embed: {
+                        ...this.getEmbedBase(),
+                        description: msg
+                    }
+                });
+            });
+
+            Logger.info("Announced message: " + msg);
         }
 
         if(input.trim().split(" ")[0] == "exit") {
