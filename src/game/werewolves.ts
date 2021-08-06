@@ -217,6 +217,7 @@ export class Werewolves {
                     sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
                     return;
                 }
+                if(this.inProgress) return;
                 this.startGame(ev);    
 
                 break;
@@ -1739,6 +1740,8 @@ export class Werewolves {
     }
 
     public async startGame(ev: KInteractionWS) {
+        this.inProgress = true;
+
         const msgId = ev.message.id;
         const api = this.bot.api;
         const chn = api.guilds.cache.get(this.guildId)!!.channels.cache.get(this.config.getGameChannel()) as PlayableChannel;
@@ -1829,8 +1832,6 @@ export class Werewolves {
                 this.turnOfWerewolves();
             }
         }, 10000);
-
-        this.inProgress = true;
     }
 
     public async cleanGameMessages() {
