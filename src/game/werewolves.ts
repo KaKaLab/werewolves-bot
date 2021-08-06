@@ -2,30 +2,7 @@ import { Client, Guild, GuildChannel, GuildMember, TextChannel, KInteractionWS }
 import { WerewolvesBot } from "../bot";
 import { BotGuildConfig } from "../guildConfig";
 import { Logger } from "../utils/logger";
-
-export enum Role {
-    SEER,
-    WITCH,
-    HUNTER,
-    KNIGHT,
-    WEREWOLVES,
-    INNOCENT
-}
-
-export namespace Role {
-    export function getName(role: Role) {
-        return {
-            0: "預言家",
-            1: "女巫",
-            2: "獵人",
-            3: "騎士",
-            4: "狼人",
-            5: "平民"
-        }[role] ?? "未知";
-    }
-
-    export const COUNT = 6;
-}
+import { Role } from "./roles";
 
 export enum GameState {
     READY,
@@ -89,7 +66,6 @@ export class Werewolves {
     private voteLimit = -1;
 
     private voteQuote = "";
-    private discussMsgId = null;
     private voteMsgId = null;
 
     private hunterNext = () => {};
@@ -124,6 +100,9 @@ export class Werewolves {
         return !!this.players.find(p => p.member.id == id);
     }
 
+    /**
+     * Setups event listeners to handle interactions sent from Discord.
+     */
     public async init() {
         this.bot.api.on("interactionCreate", async (ev) => {
             if(ev.guild_id != this.guildId) return;
@@ -238,108 +217,7 @@ export class Werewolves {
                     sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
                     return;
                 }
-
-                const msgId = ev.message.id;
-                const api = this.bot.api;
-                const chn = api.guilds.cache.get(this.guildId)!!.channels.cache.get(this.config.getGameChannel()) as PlayableChannel;
-                const msg = await chn.messages.fetch(msgId);
-
-                this.assignRoles();
-
-                console.log(this.players.map(p => {
-                    return {
-                        number: p.number,
-                        alive: p.alive,
-                        tag: p.member.user.username + "#" + p.member.user.discriminator,
-                        role: Role.getName(p.role)
-                    };
-                }));
-
-                this.players.forEach(p => {
-                    let suffix = "";
-                    if(p.role == Role.WEREWOLVES) {
-                        suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
-                    }
-
-                    p.member.send({
-                        embed: {
-                            ...this.getEmbedBase(),
-                            description: `你的身分是: **${Role.getName(p.role)}。**` + suffix
-                        }
-                    });
-                });
-
-                // @ts-ignore
-                let rest: any = api.api;
-                rest.interactions(ev.id, ev.token).callback.post({
-                    data: {
-                        type: 7,
-                        data: {
-                            components: [
-                                {
-                                    type: 1,
-                                    components: [
-                                        {
-                                            type: 2,
-                                            custom_id: "game_join",
-                                            style: 2,
-                                            label: "加入",
-                                            disabled: true
-                                        },
-                                        {
-                                            type: 2,
-                                            custom_id: "game_leave",
-                                            style: 2,
-                                            label: "離開",
-                                            disabled: true
-                                        },
-                                        {
-                                            type: 2,
-                                            custom_id: "game_start",
-                                            style: 2,
-                                            label: "遊戲進行中",
-                                            disabled: true
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    }
-                });
-
-                // Create a thread from the lobby message
-                // @ts-ignore
-                rest = api.api;
-                const r = await rest.channels(this.gameChannel!!.id).messages(msgId).threads.post({
-                    data: {
-                        name: "狼人殺遊戲",
-                        auto_archive_duration: 60
-                    }
-                });
-                this.hasThread = true;
-                
-                for(var i=0; i<this.players.length; i++) {
-                    // @ts-ignore
-                    rest = api.api;
-                    const p = this.players[i].member.id;
-                    rest.channels(r.id, "thread-members", p).put();
-                }
-
-                this.threadChannel = r.id;
-                this.daysCount = 0;
-
-                this.currentTimeout = setTimeout(() => {
-                    if(this.debugVoteOnly) {
-                        this.voteLimit = this.players.length;
-                        this.votes = [];
-                        Array.prototype.push.apply(this.votes, this.players);
-                        this.turnOfVote();
-                    } else {
-                        this.turnOfWerewolves();
-                    }
-                }, 10000);
-
-                this.inProgress = true;
+                this.startGame(ev);    
 
                 break;
         }
@@ -1859,8 +1737,108 @@ export class Werewolves {
         }
     }
 
-    public startGame() {
+    public async startGame(ev: KInteractionWS) {
+        const msgId = ev.message.id;
+        const api = this.bot.api;
+        const chn = api.guilds.cache.get(this.guildId)!!.channels.cache.get(this.config.getGameChannel()) as PlayableChannel;
+        const msg = await chn.messages.fetch(msgId);
 
+        this.assignRoles();
+
+        console.log(this.players.map(p => {
+            return {
+                number: p.number,
+                alive: p.alive,
+                tag: p.member.user.username + "#" + p.member.user.discriminator,
+                role: Role.getName(p.role)
+            };
+        }));
+
+        this.players.forEach(p => {
+            let suffix = "";
+            if(p.role == Role.WEREWOLVES) {
+                suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
+            }
+
+            p.member.send({
+                embed: {
+                    ...this.getEmbedBase(),
+                    description: `你的身分是: **${Role.getName(p.role)}。**` + suffix
+                }
+            });
+        });
+
+        // @ts-ignore
+        let rest: any = api.api;
+        rest.interactions(ev.id, ev.token).callback.post({
+            data: {
+                type: 7,
+                data: {
+                    components: [
+                        {
+                            type: 1,
+                            components: [
+                                {
+                                    type: 2,
+                                    custom_id: "game_join",
+                                    style: 2,
+                                    label: "加入",
+                                    disabled: true
+                                },
+                                {
+                                    type: 2,
+                                    custom_id: "game_leave",
+                                    style: 2,
+                                    label: "離開",
+                                    disabled: true
+                                },
+                                {
+                                    type: 2,
+                                    custom_id: "game_start",
+                                    style: 2,
+                                    label: "遊戲進行中",
+                                    disabled: true
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        });
+
+        // Create a thread from the lobby message
+        // @ts-ignore
+        rest = api.api;
+        const r = await rest.channels(this.gameChannel!!.id).messages(msgId).threads.post({
+            data: {
+                name: "狼人殺遊戲",
+                auto_archive_duration: 60
+            }
+        });
+        this.hasThread = true;
+        
+        for(var i=0; i<this.players.length; i++) {
+            // @ts-ignore
+            rest = api.api;
+            const p = this.players[i].member.id;
+            rest.channels(r.id, "thread-members", p).put();
+        }
+
+        this.threadChannel = r.id;
+        this.daysCount = 0;
+
+        this.currentTimeout = setTimeout(() => {
+            if(this.debugVoteOnly) {
+                this.voteLimit = this.players.length;
+                this.votes = [];
+                Array.prototype.push.apply(this.votes, this.players);
+                this.turnOfVote();
+            } else {
+                this.turnOfWerewolves();
+            }
+        }, 10000);
+
+        this.inProgress = true;
     }
 
     public async cleanGameMessages() {
@@ -1930,5 +1908,11 @@ export class Werewolves {
         this.threadChannel = null;
 
         this.startLobby();
+    }
+
+    public async stopGame() {
+        if(this.currentTimeout) {
+            clearTimeout(this.currentTimeout);
+        }
     }
 }
