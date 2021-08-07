@@ -1,6 +1,7 @@
 {
   "name": "werewolves-bot",
   "version": "2.0.0",
+  "preview": true,
   "description": "Play Werewolves on Discord!",
   "repository": {
     "type": "git",
