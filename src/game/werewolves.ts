@@ -4,6 +4,7 @@ import { BotGuildConfig } from "../guildConfig";
 import { AsyncStorage } from "../utils/asyncStorage";
 import { Logger } from "../utils/logger";
 import { PromiseTimer } from "../utils/timeprom";
+import { Player } from "./player";
 import { Role } from "./roles";
 
 export enum GameState {
@@ -21,32 +22,9 @@ export enum GameState {
 
 type PlayableChannel = TextChannel;
 
-export class WPlayer {
-    public member: GuildMember;
-    public number: number;
-    public alive: boolean = true; 
-    public role: Role = Role.INNOCENT;
-
-    public choice: number = -1;
-    public votes: number = 0;
-
-    constructor(number: number, member: GuildMember) {
-        this.number = number;
-        this.member = member;
-    }
-
-    public kill() {
-        this.alive = false;
-    }
-
-    public toString() {
-        return `Player #${this.number}, alive=${this.alive}, role=${this.role}`;
-    }
-}
-
 export class Werewolves {
-    public players: WPlayer[] = []
-    private votes: WPlayer[] = []
+    public players: Player[] = []
+    private votes: Player[] = []
     public state: GameState = GameState.READY;
     private bot: WerewolvesBot;
 
@@ -139,32 +117,32 @@ export class Werewolves {
         return !!this.players.find(p => p.member.id == id);
     }
 
-    public getWerewolves(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getWerewolves(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.WEREWOLVES;
         });
     }
 
-    public getSeers(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getSeers(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.SEER;
         });
     }
 
-    public getWitches(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getWitches(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.WITCH;
         });
     }
 
-    public getKnights(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getKnights(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.KNIGHT;
         });
     }
 
-    public getHunters(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getHunters(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.HUNTER;
         });
     }
@@ -605,7 +583,7 @@ export class Werewolves {
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
         const votedDown = this.votes[0];
 
-        let hunter: WPlayer | null = null;
+        let hunter: Player | null = null;
         if(wolvesKilled?.role == Role.HUNTER) hunter = wolvesKilled;
         if(votedDown?.role == Role.HUNTER) hunter = votedDown;
 
@@ -908,7 +886,7 @@ export class Werewolves {
                 }
 
                 if(!this.players.find(m => m.member.id == userId)) {
-                    const p = new WPlayer(this.players.length + 1, member);
+                    const p = new Player(this.players.length + 1, member);
                     this.players.push(p);
                 }
                 break;
@@ -1394,7 +1372,7 @@ export class Werewolves {
     }
 
     private getLobbyEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             return `${i+1}. <@${m.member.id}>`;
         }).join("\n");
 
@@ -1458,7 +1436,7 @@ export class Werewolves {
     }
 
     private getGameEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
             return `${i+1}. ${f}<@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
         }).join("\n");
@@ -1487,7 +1465,7 @@ export class Werewolves {
     }
 
     private getEndGameEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
             return `${i+1}. ${f}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
         }).join("\n");
@@ -1516,7 +1494,7 @@ export class Werewolves {
     }
 
     private getVoteEmbed(): any {
-        var players = this.votes.map((m: WPlayer, i: number) => {
+        var players = this.votes.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
             return `${i+1}. ${f}<@${m.member.id}>${f}${!m.alive ? " (死亡)" : ` (${m.votes} 票)`}`;
         }).join("\n");
