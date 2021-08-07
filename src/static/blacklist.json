@@ -1,5 +1,8 @@
 {
     "blacklist": [
-        "852182127055077397"
+        {
+            "id": "852182127055077397",
+            "reason": "5ZOI5ZOI77yM5L2g5piv5LiN5piv5oyJ5LqG5rKS5Y+N5oeJ77yM5oiR6YCZ5YCL5Y+v5oKy5LuU6YO95Y+v5Lul5oyJ77yM6YKj5L2g5piv5LiN5piv6YCj5Y+v5oKy5LuU6YO95LiN5aaC"
+        }
     ]
 }

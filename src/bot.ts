@@ -238,7 +238,7 @@ export class WerewolvesBot extends EventEmitter {
     }
 
     public isBlacklisted(id: string): boolean {
-        const result = !!blacklist.find(s => s == id);
+        const result = !!blacklist.find(s => s.id == id);
         if(result) {
             Logger.warn(`User ID ${id} is banned from this bot`);
         }

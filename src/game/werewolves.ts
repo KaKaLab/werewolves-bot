@@ -3,6 +3,7 @@ import { WerewolvesBot } from "../bot";
 import { BotGuildConfig } from "../guildConfig";
 import { Logger } from "../utils/logger";
 import { Role } from "./roles";
+import { blacklist } from "../static/blacklist.json";
 
 export enum GameState {
     READY,
@@ -103,7 +104,17 @@ export class Werewolves {
      */
     public async init() {
         this.bot.api.on("interactionCreate", async (ev) => {
-            if(this.bot.isBlacklisted(ev.member.user.id)) return;
+            if(this.bot.isBlacklisted(ev.member.user.id)) {
+                const data = blacklist.find(item => item.id == ev.member.user.id)!!.reason;
+                const buff = Buffer.from(data, "base64");
+                const text = buff.toString("utf-8");
+
+                this.bot.respondToInteraction(ev, {
+                    type: 4,
+                    data: this.bot.getCompactedMessageWithEmbed(text, true)
+                }, "banned");
+                return;
+            }
             if(ev.guild_id != this.guildId) return;
             if(ev.type != 3) return;
 
