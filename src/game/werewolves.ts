@@ -311,39 +311,6 @@ export class Werewolves {
         await this.stopGame(gameMsg);
     }
 
-    private async respondToInteraction(ev: KInteractionWS, data: any, name = "general-respond-interaction") {
-        return await this.rest.interactions(ev.id, ev.token).callback.post({ data })
-            .catch(this.bot.failedToSendMessage(name));
-    }
-
-    private getCompactedMessageWithEmbed(message: string, ephemeral = false) {
-        return {
-            flags: ephemeral ? 64 : 0,
-            embeds: [
-                {
-                    ...this.getEmbedBase(),
-                    description: message
-                }
-            ]
-        };
-    }
-
-    private async sendMessage(channelId: string, data: any, name = "general-msg-post") {
-        return await this.rest.channels(channelId).messages.post({
-            data
-        }).catch(this.bot.failedToSendMessage(name));
-    }
-
-    private async editMessage(channelId: string, messageId: string, data: any, name = "general-msg-patch") {
-        return await this.rest.channels(channelId).messages(messageId).patch({
-            data
-        }).catch(this.bot.failedToEditMessage(name));
-    }
-
-    private async deleteMessage(channelId: string, messageId: string, name = "general-delete-msg") {
-        return await this.rest.channels(channelId).messages(messageId).delete().catch(this.bot.failedToDeleteMessage(name));
-    }
-
     private async turnOfWerewolves() {
         if(this.debugVoteOnly) return;
 
@@ -356,7 +323,7 @@ export class Werewolves {
         };
         this.interactionStorage.on("cancelled", handler);
 
-        this.sendMessage(this.threadChannel!!, this.getWerewolvesMessage(), "werewolves-action");
+        this.bot.sendMessage(this.threadChannel!!, this.getWerewolvesMessage(), "werewolves-action");
         while(true) {
             const ev = await this.waitNextRoleInteraction(Role.WEREWOLVES);
             if(cancelled || !ev) {
@@ -374,11 +341,11 @@ export class Werewolves {
             this.wolvesKilled = parseInt(opt.substring(7));
             const killed = this.players.find(p => p.number == this.wolvesKilled);
 
-            await this.respondToInteraction(ev, {
+            await this.bot.respondToInteraction(ev, {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed(`你殺掉了 <@${killed!!.member.id}>。`, true)
+                data: this.bot.getCompactedMessageWithEmbed(`你殺掉了 <@${killed!!.member.id}>。`, true)
             }, "werewolves-killed");
-            await this.deleteMessage(this.threadChannel!!, ev.message.id, "werewolve-source");
+            await this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "werewolve-source");
             break;
         }
     }
@@ -396,7 +363,7 @@ export class Werewolves {
             };
             this.interactionStorage.on("cancelled", handler);
 
-            this.sendMessage(this.threadChannel!!, this.getSeerMessage(), "seer-turn");
+            this.bot.sendMessage(this.threadChannel!!, this.getSeerMessage(), "seer-turn");
             while(true) {
                 const ev = await this.waitNextRoleInteraction(Role.SEER);
                 if(cancelled || !ev) {
@@ -419,11 +386,11 @@ export class Werewolves {
                 const p = this.players.find(p => p.number == n)!!;
                 const isWolf = p.role == Role.WEREWOLVES;
 
-                await this.respondToInteraction(ev, {
+                await this.bot.respondToInteraction(ev, {
                     type: 4,
-                    data: this.getCompactedMessageWithEmbed(`<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`, true)
+                    data: this.bot.getCompactedMessageWithEmbed(`<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`, true)
                 }, "seer-inspected");
-                await this.deleteMessage(this.threadChannel!!, ev.message.id, "seer-source");
+                await this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "seer-source");
                 break; 
             }
         }
@@ -439,7 +406,7 @@ export class Werewolves {
             this.state = GameState.WITCH;
             Logger.log("state (" + this.guildId + ") -> witch");
 
-            const r = await this.sendMessage(this.threadChannel!!, this.getWitchMessageA(prefix), "witch-turn-a");
+            const r = await this.bot.sendMessage(this.threadChannel!!, this.getWitchMessageA(prefix), "witch-turn-a");
             this.witchAMsgId = r.id;
             Logger.info("WitchA msg id -> " + this.witchAMsgId);
 
@@ -483,27 +450,27 @@ export class Werewolves {
         const key = ev.data.custom_id.substring(6);
         if(key == "inspect") {
             const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
-            this.respondToInteraction(ev, {
+            this.bot.respondToInteraction(ev, {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed(`本回合狼人殺了 <@${wolvesKilled?.member.id}>。`, true)
+                data: this.bot.getCompactedMessageWithEmbed(`本回合狼人殺了 <@${wolvesKilled?.member.id}>。`, true)
             }, "witch-inspect-killer");
             return false;
         }
         else if(key == "skip") {
-            this.respondToInteraction(ev, {
+            this.bot.respondToInteraction(ev, {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed("你選擇跳過本回合。", true)
+                data: this.bot.getCompactedMessageWithEmbed("你選擇跳過本回合。", true)
             }, "witch-skip");
 
-            await this.deleteMessage(this.threadChannel!!, this.witchAMsgId!!, "witch-source");
+            await this.bot.deleteMessage(this.threadChannel!!, this.witchAMsgId!!, "witch-source");
             return true;
         } else {
             // @ts-ignore
             const remains: number = this.witchRemainSkills[key];
             if(remains <= 0) {
-                this.respondToInteraction(ev, {
+                this.bot.respondToInteraction(ev, {
                     type: 4,
-                    data: this.getCompactedMessageWithEmbed((key == "kill" ? "毒藥" : "解藥") + "已用完。", true)
+                    data: this.bot.getCompactedMessageWithEmbed((key == "kill" ? "毒藥" : "解藥") + "已用完。", true)
                 });
                 return false;
             }
@@ -518,7 +485,7 @@ export class Werewolves {
             }[key];
             this.witchAction = key;
 
-            this.respondToInteraction(ev, {
+            this.bot.respondToInteraction(ev, {
                 type: 4,
                 data: {
                     ...this.getWitchMessageB(type),
@@ -548,11 +515,11 @@ export class Werewolves {
             save: "解藥"
         }[this.witchAction!!];
 
-        this.respondToInteraction(ev, {
+        this.bot.respondToInteraction(ev, {
             type: 4,
-            data: this.getCompactedMessageWithEmbed(`你選擇對 <@${p.member.id}> ${type}。`, true)
+            data: this.bot.getCompactedMessageWithEmbed(`你選擇對 <@${p.member.id}> ${type}。`, true)
         }, "witch-action");
-        await this.deleteMessage(this.threadChannel!!, this.witchAMsgId!!, "witch-msg-a");
+        await this.bot.deleteMessage(this.threadChannel!!, this.witchAMsgId!!, "witch-msg-a");
         return true;
     }
 
@@ -603,7 +570,7 @@ export class Werewolves {
             };
             this.interactionStorage.on("cancelled", handler);
 
-            this.sendMessage(this.threadChannel!!, {
+            this.bot.sendMessage(this.threadChannel!!, {
                 embeds: [
                     {
                         ...this.getGameEmbed(),
@@ -631,11 +598,11 @@ export class Werewolves {
                 const killed = this.players.find(p => p.number == hunted);
                 killed?.kill();
 
-                await this.respondToInteraction(ev, {
+                await this.bot.respondToInteraction(ev, {
                     type: 4,
-                    data: this.getCompactedMessageWithEmbed(`獵人帶走了 <@${killed!!.member.id}>。`)
+                    data: this.bot.getCompactedMessageWithEmbed(`獵人帶走了 <@${killed!!.member.id}>。`)
                 }, "hunter-killed");
-                await this.deleteMessage(this.threadChannel!!, ev.message.id, "hunter-source");
+                await this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "hunter-source");
                 break;
             }
         }
@@ -655,7 +622,7 @@ export class Werewolves {
 
         const discussTime = this.config.isDebugShortTime() ? 15 : 120;
 
-        const r = await this.sendMessage(this.threadChannel!!, {
+        const r = await this.bot.sendMessage(this.threadChannel!!, {
             embeds: [
                 {
                     ...this.getGameEmbed(),
@@ -666,7 +633,7 @@ export class Werewolves {
         }, "discuss-turn");
 
         this.currentTimeout = setTimeout(() => {
-            this.editMessage(this.threadChannel!!, r.id, {
+            this.bot.editMessage(this.threadChannel!!, r.id, {
                 components: this.getDiscussComponents(true)
             }, "discuss-enable-vote");
         }, discussTime * 1000);
@@ -692,7 +659,7 @@ export class Werewolves {
             const key = ev.data.custom_id.substring(8);
             switch(key) {
                 case "vote":
-                    this.deleteMessage(this.threadChannel!!, ev.message.id, "discuss-source-a");
+                    this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "discuss-source-a");
                     this.voteLimit = this.players.length;
                     this.votes = [];
                     Array.prototype.push.apply(this.votes, this.players);
@@ -700,15 +667,15 @@ export class Werewolves {
                 case "knight":
                     const player = this.getPlayerFromInteraction(ev);
                     if(player!!.role != Role.KNIGHT) {
-                        this.respondToInteraction(ev, {
+                        this.bot.respondToInteraction(ev, {
                             type: 4,
                             data: this.getRoleMismatchMessage(Role.KNIGHT)
                         }, "discuss-not-knight");
                         continue;
                     }
                     
-                    this.deleteMessage(this.threadChannel!!, ev.message.id, "discuss-source-b");
-                    this.respondToInteraction(ev, {
+                    this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "discuss-source-b");
+                    this.bot.respondToInteraction(ev, {
                         type: 4,
                         data: this.getKnightMessage()
                     }, "discuss-knight");
@@ -754,12 +721,12 @@ export class Werewolves {
     
             (isWolf ? p : player).kill();
     
-            await this.respondToInteraction(ev, {
+            await this.bot.respondToInteraction(ev, {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed( `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`)
+                data: this.bot.getCompactedMessageWithEmbed( `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`)
             }, "knight-result");
     
-            this.deleteMessage(this.threadChannel!!, ev.message.id, "knight-source");
+            this.bot.deleteMessage(this.threadChannel!!, ev.message.id, "knight-source");
             return;
         }
     }
@@ -780,7 +747,7 @@ export class Werewolves {
         });
         this.refreshVotes();
 
-        const r = await this.sendMessage(this.threadChannel!!, this.getVoteMessage(appendEmbeds), "vote-turn");
+        const r = await this.bot.sendMessage(this.threadChannel!!, this.getVoteMessage(appendEmbeds), "vote-turn");
         this.voteMsgId = r.id;
 
         this.currentTimeout = setTimeout(() => {
@@ -790,14 +757,14 @@ export class Werewolves {
 
     private async endOfVote() {
         Logger.log("endOfVote() called");
-        await this.deleteMessage(this.threadChannel!!, this.voteMsgId!!, "vote-msg");
+        await this.bot.deleteMessage(this.threadChannel!!, this.voteMsgId!!, "vote-msg");
 
         this.votes.sort((a, b) => {
             return b.votes - a.votes;
         });
 
         if(this.votes[0].votes == 0) {
-            await this.sendMessage(this.threadChannel!!, this.getCompactedMessageWithEmbed("無人投票，進入下一晚..."), "vote-transition-night");
+            await this.bot.sendMessage(this.threadChannel!!, this.bot.getCompactedMessageWithEmbed("無人投票，進入下一晚..."), "vote-transition-night");
             this.isVoting = false;
             return;
         }
@@ -820,7 +787,7 @@ export class Werewolves {
             return;
         }
 
-        await this.sendMessage(this.threadChannel!!, this.getCompactedMessageWithEmbed(`最高票為 <@${this.votes[0].member.id}>`), "vote-down-max");
+        await this.bot.sendMessage(this.threadChannel!!, this.bot.getCompactedMessageWithEmbed(`最高票為 <@${this.votes[0].member.id}>`), "vote-down-max");
         this.votes[0].kill();
         this.isVoting = false;
     }
@@ -833,7 +800,7 @@ export class Werewolves {
         await rest.interactions(ev.id, ev.token).callback.post({
             data: {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
+                data: this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
             }
         }).catch(this.bot.failedToSendMessage("member-not-player"));
     }
@@ -940,14 +907,14 @@ export class Werewolves {
         }
         const player = this.getPlayerFromInteraction(ev);
         if(!player) {
-            this.respondToInteraction(ev, {
+            this.bot.respondToInteraction(ev, {
                 type: 4,
-                data: this.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
+                data: this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
             }, "vote-ephemeral");
             return;
         }
         if(!player?.alive) {
-            this.respondToInteraction(ev, {
+            this.bot.respondToInteraction(ev, {
                 type: 4,
                 data: this.getPlayerDeadInvalidMessage()
             }, "vote-dead");
@@ -964,7 +931,7 @@ export class Werewolves {
         player.choice = player.alive ? n : -1;
         this.refreshVotes();
 
-        await this.respondToInteraction(ev, {
+        await this.bot.respondToInteraction(ev, {
             type: 7,
             data: this.getVoteMessage()
         }, "vote-result");
@@ -1603,7 +1570,7 @@ export class Werewolves {
             });
         });
 
-        this.respondToInteraction(ev, {
+        this.bot.respondToInteraction(ev, {
             type: 7,
             data: {
                 components: [
@@ -1729,7 +1696,7 @@ export class Werewolves {
             }
         };
         const threadChannel = this.threadChannel!!;
-        await this.sendMessage(threadChannel, data.data, "end-game-in-thread");
+        await this.bot.sendMessage(threadChannel, data.data, "end-game-in-thread");
         
         const dateStr = new Date().toISOString().replace(/(?=.*?)T/, " ").replace(/(?=.*?)\..*/, "").replace(/:/g, "-");
         await this.rest.channels(threadChannel).patch({

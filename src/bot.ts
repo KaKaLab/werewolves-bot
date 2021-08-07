@@ -71,23 +71,10 @@ export class WerewolvesBot extends EventEmitter {
         this.api.on("interactionCreate", async (ev) => {
             if(ev.type != 2) return;
             if(running) {
-                
-                // @ts-ignore
-                const api: any = this.api.api;
-                await api.interactions(ev.id, ev.token).callback.post({
-                    data: {
-                        type: 4,
-                        data: {
-                            flags: 64,
-                            embeds: [
-                                {
-                                    ...this.getEmbedBase(),
-                                    description: "正在進行其他指令，無法使用。"
-                                }
-                            ]
-                        }
-                    }
-                }).catch(this.failedToSendMessage("cmd-other-running"));
+                await this.respondToInteraction(ev, {
+                    type: 4,
+                    data: this.getCompactedMessageWithEmbed("正在進行其他指令，無法使用。", true)
+                }, "cmd-other-running");
                 return;
             }
 
@@ -103,47 +90,31 @@ export class WerewolvesBot extends EventEmitter {
                 }
 
                 if(sub.name == "credit") {
-                    // @ts-ignore
-                    const api: any = this.api.api;
-                    await api.interactions(ev.id, ev.token).callback.post({
+                    await this.respondToInteraction(ev, {
+                        type: 4,
                         data: {
-                            type: 4,
-                            data: {
-                                embeds: [
-                                    {
-                                        ...this.getEmbedBase(),
-                                        fields: [
-                                            {
-                                                name: "開發人員",
-                                                value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
-                                            }
-                                        ]
-                                    }
-                                ]
-                            }
+                            embeds: [
+                                {
+                                    ...this.getEmbedBase(),
+                                    fields: [
+                                        {
+                                            name: "開發人員",
+                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
+                                        }
+                                    ]
+                                }
+                            ]
                         }
-                    }).catch(this.failedToSendMessage("cmd-credit"));
+                    }, "cmd-credit");
                     return;
                 }
 
                 if(sub.name == "stop-the-game-for-sure-plz") {
                     var sendEmbed = async (message: string) => {
-                        // @ts-ignore
-                        const api: any = this.api.api;
-                        await api.interactions(ev.id, ev.token).callback.post({
-                            data: {
-                                type: 4,
-                                data: {
-                                    flags: 64,
-                                    embeds: [
-                                        {
-                                            ...this.getEmbedBase(),
-                                            description: message
-                                        }
-                                    ]
-                                }
-                            }
-                        }).catch(this.failedToSendMessage("cmd-force-stop-result"));
+                        await this.respondToInteraction(ev, {
+                            type: 4,
+                            data: this.getCompactedMessageWithEmbed(message, true)
+                        }, "cmd-force-stop-result");
                     };
 
                     const game = this.games.find(g => g.guildId == ev.guild_id);
@@ -187,52 +158,63 @@ export class WerewolvesBot extends EventEmitter {
                         }
                         return eval("this." + key.value);
                     };
+
                     try {
                         const result = run.call(game.config.data);
                         if(action.name == "set") {
                             game.config.save();
                         }
 
-                        // @ts-ignore
-                        const api: any = this.api.api;
-                        await api.interactions(ev.id, ev.token).callback.post({
-                            data: {
-                                type: 4,
-                                data: {
-                                    embeds: [
-                                        {
-                                            ...this.getEmbedBase(),
-                                            description: `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name == "set" ? "\n該設定會在下回合生效。" : "")
-                                        }
-                                    ]
-                                }
-                            }
-                        }).catch(this.failedToSendMessage("cmd-settings-result"));
+                        const msg = `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name == "set" ? "\n該設定會在下回合生效。" : "");
+                        await this.respondToInteraction(ev, {
+                            type: 4,
+                            data: this.getCompactedMessageWithEmbed(msg)
+                        }, "cmd-settings-result");
                     } catch(ex) {
-                        // @ts-ignore
-                        const api: any = this.api.api;
-                        await api.interactions(ev.id, ev.token).callback.post({
-                            data: {
-                                type: 4,
-                                data: {
-                                    flags: 64,
-                                    embeds: [
-                                        {
-                                            ...this.getEmbedBase(),
-                                            description: "設定該選項的值的時候發生錯誤。"
-                                        }
-                                    ]
-                                }
-                            }
-                        }).catch(this.failedToSendMessage("cmd-settings-error"));
+                        await this.respondToInteraction(ev, {
+                            type: 4,
+                            data: this.getCompactedMessageWithEmbed("設定該選項的值的時候發生錯誤。", true)
+                        }, "cmd-settings-error");
                     }
                     return;
                 }
-
-                console.log(ev.data.options[0]);
+                
                 return;
             }
         });
+    }
+
+    public getCompactedMessageWithEmbed(message: string, ephemeral = false) {
+        return {
+            flags: ephemeral ? 64 : 0,
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: message
+                }
+            ]
+        };
+    }
+
+    public async respondToInteraction(ev: KInteractionWS, data: any, name = "general-respond-interaction") {
+        return await this.rest.interactions(ev.id, ev.token).callback.post({ data })
+            .catch(this.failedToSendMessage(name));
+    }
+
+    public async sendMessage(channelId: string, data: any, name = "general-msg-post") {
+        return await this.rest.channels(channelId).messages.post({
+            data
+        }).catch(this.failedToSendMessage(name));
+    }
+
+    public async editMessage(channelId: string, messageId: string, data: any, name = "general-msg-patch") {
+        return await this.rest.channels(channelId).messages(messageId).patch({
+            data
+        }).catch(this.failedToEditMessage(name));
+    }
+
+    public async deleteMessage(channelId: string, messageId: string, name = "general-delete-msg") {
+        return await this.rest.channels(channelId).messages(messageId).delete().catch(this.failedToDeleteMessage(name));
     }
 
     public async spawnLobby(guildId: string, ev: KInteractionWS | null = null) {
@@ -247,21 +229,10 @@ export class WerewolvesBot extends EventEmitter {
 
         if(game.inProgress) {
             if(ev) {
-                // @ts-ignore
-                const api: any = this.api.api;
-                await api.interactions(ev.id, ev.token).callback.post({
+                await this.respondToInteraction(ev, {
                     type: 4,
-                    data: {
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: "遊戲正在進行中，無法使用。"
-                            }
-                        ]
-                    }
-                }).catch(this.failedToSendMessage("cmd-game-in-progress"));
-            } else {
-                // ?
+                    data: this.getCompactedMessageWithEmbed("遊戲正在進行中，無法使用。")
+                }, "cmd-game-in-progress");
             }
         } else {
             await game.cleanGameMessages();
@@ -383,6 +354,7 @@ export class WerewolvesBot extends EventEmitter {
         if(input.trim().split(" ")[0] == "reload") {
             Logger.info("Reloading...");
             this.reload();
+            return;
         }
 
         if(input.trim().split(" ")[0] == "dump" && input.length >= 6) {
@@ -413,6 +385,7 @@ export class WerewolvesBot extends EventEmitter {
             } catch(ex) {
                 Logger.error(`depth "${objs[0]}" is not a number`);
             }
+            return;
         }
 
         if(input.trim().split(" ")[0] == "announce") {
@@ -432,6 +405,7 @@ export class WerewolvesBot extends EventEmitter {
             });
 
             Logger.info("Announced message: " + msg);
+            return;
         }
 
         if(input.trim().split(" ")[0] == "exit") {
