@@ -6,6 +6,7 @@ import { Logger } from './utils/logger';
 import { CommandOptionType, SlashPatch } from './utils/slash';
 import * as util from "util";
 import { EventEmitter } from 'stream';
+import { blacklist } from "./static/blacklist.json";
 
 export class WerewolvesBot extends EventEmitter {
     public api: Client;
@@ -42,6 +43,7 @@ export class WerewolvesBot extends EventEmitter {
         });
 
         this.api.on("message", (msg: Message) => {
+            if(this.isBlacklisted(msg.author.id)) return;
             if(msg.channel instanceof DMChannel && msg.author.id != this.api.user?.id) {
                 Logger.info(msg.author.tag + ": " + msg.content);
             }
@@ -64,6 +66,7 @@ export class WerewolvesBot extends EventEmitter {
         let running = false;
 
         this.api.on("interactionCreate", async (ev) => {
+            if(this.isBlacklisted(ev.member.user.id)) return;
             if(ev.type != 2) return;
             if(running) {
                 // @ts-ignore
@@ -227,6 +230,14 @@ export class WerewolvesBot extends EventEmitter {
                 return;
             }
         });
+    }
+
+    public isBlacklisted(id: string): boolean {
+        const result = !!blacklist.find(s => s == id);
+        if(result) {
+            Logger.warn(`User ID ${id} is banned from this bot`);
+        }
+        return result;
     }
 
     public async spawnLobby(guildId: string, ev: KInteractionWS | null = null) {
