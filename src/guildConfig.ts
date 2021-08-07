@@ -42,6 +42,7 @@ export class BotGuildConfig {
             gameChannel: "",
             minPlayers: 6,
             maxPlayers: 12,
+            debugVoteOnly: false,
             debugShortTime: false,
             roleMaxPlayers: {
                 seer: 1,
@@ -50,6 +51,7 @@ export class BotGuildConfig {
                 knight: 1,
                 werewolves: 2,
             },
+            enableBeta: false,
             knightThreshold: 6,
             version: 0,
             ...this.data
@@ -93,7 +95,15 @@ export class BotGuildConfig {
         return this.data.minPlayers;
     }
 
+    public isDebugVoteOnly(): boolean {
+        return this.data.debugVoteOnly;
+    }
+
     public isDebugShortTime(): boolean {
         return this.data.debugShortTime;
+    }
+
+    public isBetaEnabled(): boolean {
+        return this.data.enableBeta;
     }
 }

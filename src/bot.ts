@@ -287,7 +287,7 @@ export class WerewolvesBot extends EventEmitter {
             "roleMaxPlayers.knight",
             "roleMaxPlayers.werewolves",
             "maxPlayers", "minPlayers", "knightThreshold",
-            "debugShortTime"
+            "debugShortTime", "enableBeta", "debugVoteOnly"
         ].map(v => {
             return {
                 name: v,

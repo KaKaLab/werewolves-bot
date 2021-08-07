@@ -27,8 +27,14 @@
 * ### `minPlayers`
 > 遊戲玩家的數量下限，有這個數量的玩家加入就可以開始遊戲。預設為 `6`。
 
+* ### `debugVoteOnly`
+> 為了除錯用途而設計，值為 `true` 時只會進行投票。預設為 `false`。
+
 * ### `debugShortTime`
 > 為了除錯用途而設計，值為 `true` 時縮短投票與發言時間。預設為 `false`。
+
+* ### `enableBeta`
+> 啟用 Beta 功能， **Bug 出沒注意。** 預設為 `false`。
 
 ---
 
