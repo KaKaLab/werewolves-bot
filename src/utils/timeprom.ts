@@ -6,4 +6,10 @@ export class PromiseTimer {
             }, millis);
         });
     }
+
+    public static async waitUntil(predicate: () => boolean): Promise<void> {
+        while(!predicate()) {
+            await PromiseTimer.timeout(16);
+        }
+    }
 }
