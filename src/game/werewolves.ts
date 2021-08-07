@@ -262,6 +262,7 @@ export class Werewolves {
     private async runGameLoop() {
         let ended = this.isGameEnded();
         this.daysCount = -1;
+        this.cancelled = false;
 
         while(!ended) {
             this.daysCount++;
@@ -278,7 +279,7 @@ export class Werewolves {
             const quote = await this.turnOfDaylight(daylightPrefix);
             if(this.cancelled) return;
 
-            this.turnOfHunter(quote);
+            await this.turnOfHunter(quote);
             if(this.cancelled) return;
 
             if(this.isGameEnded()) break;
@@ -302,7 +303,7 @@ export class Werewolves {
                 });
                 if(this.cancelled) return;
 
-                this.turnOfHunter(quote);
+                await this.turnOfHunter(quote);
                 if(this.cancelled) return;
 
                 if(this.isGameEnded()) break;
@@ -409,7 +410,7 @@ export class Werewolves {
     }
 
     private async turnOfWitch(): Promise<string> {
-        if(this.debugVoteOnly) return "VoteOnly";
+        if(this.debugVoteOnly) return "已啟用僅投票模式。";
         
         this.witchTarget = -1;
         this.witchAction = null;
@@ -536,7 +537,7 @@ export class Werewolves {
     }
 
     private async turnOfDaylight(prefix: string): Promise<string> {
-        if(this.debugVoteOnly) return "VoteOnly";
+        if(this.debugVoteOnly) return "已啟用僅投票模式。";
 
         this.votes = [];
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
@@ -700,8 +701,6 @@ export class Werewolves {
     }
 
     private async turnOfKnight() {
-        if(this.debugVoteOnly) return;
-
         let cancelled = false;
         let handler = () => {
             cancelled = true;
