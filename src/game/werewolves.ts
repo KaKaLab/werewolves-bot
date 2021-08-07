@@ -89,6 +89,7 @@ export class Werewolves {
      */
     public async init() {
         this.bot.api.on("interactionCreate", async (ev) => {
+            if(this.bot.isBlacklisted(ev.member.user.id)) return;
             if(ev.guild_id != this.guildId) return;
             if(ev.type != 3) return;
 
