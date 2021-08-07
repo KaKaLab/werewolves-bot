@@ -18,6 +18,11 @@ export class WerewolvesBot extends EventEmitter {
 
     public static instance: WerewolvesBot;
 
+    public get rest(): any {
+        // @ts-ignore
+        return this.api.api;
+    }
+
     constructor() {
         super();
 
@@ -238,6 +243,39 @@ export class WerewolvesBot extends EventEmitter {
             Logger.warn(`User ID ${id} is banned from this bot`);
         }
         return result;
+    }
+
+    public getCompactedMessageWithEmbed(message: string, ephemeral = false) {
+        return {
+            flags: ephemeral ? 64 : 0,
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: message
+                }
+            ]
+        };
+    }
+
+    public async respondToInteraction(ev: KInteractionWS, data: any, name = "general-respond-interaction") {
+        return await this.rest.interactions(ev.id, ev.token).callback.post({ data })
+            .catch(this.failedToSendMessage(name));
+    }
+
+    public async sendMessage(channelId: string, data: any, name = "general-msg-post") {
+        return await this.rest.channels(channelId).messages.post({
+            data
+        }).catch(this.failedToSendMessage(name));
+    }
+
+    public async editMessage(channelId: string, messageId: string, data: any, name = "general-msg-patch") {
+        return await this.rest.channels(channelId).messages(messageId).patch({
+            data
+        }).catch(this.failedToEditMessage(name));
+    }
+
+    public async deleteMessage(channelId: string, messageId: string, name = "general-delete-msg") {
+        return await this.rest.channels(channelId).messages(messageId).delete().catch(this.failedToDeleteMessage(name));
     }
 
     public async spawnLobby(guildId: string, ev: KInteractionWS | null = null) {
