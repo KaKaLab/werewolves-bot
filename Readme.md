@@ -10,7 +10,7 @@
 ## 機器人指令
 這個機器人的所有指令都是 `/wolf` 開頭的，裡面的指令清單也有做解釋，故此處只會講解 `/wolf settings ...` 內的選項。
 
-* ## `roleMaxPlayers.[role]`
+* ### `roleMaxPlayers.[role]`
 > 這些選項代表的是 `role` 角色的數量上限。其中：
 > * `seer` 代表「預言家」，預設為 `1`。
 > * `witch` 代表「女巫」，預設為 `1`。
@@ -18,16 +18,16 @@
 > * `knight` 代表「騎士」，預設為 `1`。
 > * `werewolves` 代表「狼人」，預設為 `2`。
 
-* ## `knightThreshold`
+* ### `knightThreshold`
 > 開始出現騎士所需要的玩家數量。預設為 `6`。
 
-* ## `maxPlayers`
+* ### `maxPlayers`
 > 遊戲玩家的數量上限。預設為 `12`。
 
-* ## `minPlayers`
+* ### `minPlayers`
 > 遊戲玩家的數量下限，有這個數量的玩家加入就可以開始遊戲。預設為 `6`。
 
-* ## `debugShortTime`
+* ### `debugShortTime`
 > 為了除錯用途而設計，值為 `true` 時縮短投票與發言時間。預設為 `false`。
 
 ---
