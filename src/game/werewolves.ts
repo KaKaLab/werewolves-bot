@@ -1215,7 +1215,6 @@ export class Werewolves {
                 }
             ] : [];
         });
-        console.log(options);
 
         if(options.length == 0) {
             options = [
