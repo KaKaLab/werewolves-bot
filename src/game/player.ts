@@ -11,6 +11,8 @@ export class Player {
     public choice: number = -1;
     public votes: number = 0;
 
+    public couple: Player | null = null;
+
     constructor(number: number, member: GuildMember) {
         this.number = number;
         this.member = member;

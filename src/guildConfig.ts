@@ -53,6 +53,7 @@ export class BotGuildConfig {
             },
             enableBeta: false,
             knightThreshold: 6,
+            couplesThreshold: 6,
             version: 0,
             ...this.data
         };

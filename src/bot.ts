@@ -17,6 +17,11 @@ export class WerewolvesBot extends EventEmitter {
 
     public static instance: WerewolvesBot;
 
+    public get rest(): any {
+        // @ts-ignore
+        return this.api.api;
+    }
+
     constructor() {
         super();
 
@@ -66,6 +71,7 @@ export class WerewolvesBot extends EventEmitter {
         this.api.on("interactionCreate", async (ev) => {
             if(ev.type != 2) return;
             if(running) {
+                
                 // @ts-ignore
                 const api: any = this.api.api;
                 await api.interactions(ev.id, ev.token).callback.post({
@@ -286,7 +292,8 @@ export class WerewolvesBot extends EventEmitter {
             "roleMaxPlayers.hunter",
             "roleMaxPlayers.knight",
             "roleMaxPlayers.werewolves",
-            "maxPlayers", "minPlayers", "knightThreshold",
+            "maxPlayers", "minPlayers",
+            "knightThreshold", "couplesThreshold",
             "debugShortTime", "enableBeta", "debugVoteOnly"
         ].map(v => {
             return {

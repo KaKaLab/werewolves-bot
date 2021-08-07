@@ -147,6 +147,12 @@ export class Werewolves {
         });
     }
 
+    public getCouples(): Player[] {
+        return this.players.filter((p: Player) => {
+            return !!p.couple;
+        });
+    }
+
     public refreshVotes() {
         this.players.forEach(v => {
             v.votes = 0;
