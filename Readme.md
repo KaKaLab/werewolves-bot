@@ -50,8 +50,6 @@
 
 1. 打指令或從右邊下載，把這個 repo clone 下來：
 ```bat
-mkdir werewolves-bat
-cd werewolves-bat
 git clone https://github.com/KakaLab/werewolves-bot
 ``` 
 
