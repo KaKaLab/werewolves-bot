@@ -269,37 +269,46 @@ export class Werewolves {
 
         while(!ended) {
             this.daysCount++;
-            await this.turnOfWerewolvesBeta();
-            if(this.cancelled) return;
-            await this.turnOfSeerBeta();
-            if(this.cancelled) return;
-            const daylightPrefix = await this.turnOfWitchBeta();
-            if(this.cancelled) return;
-            const quote = await this.turnOfDaylightBeta(daylightPrefix);
+
+            await this.turnOfWerewolves();
             if(this.cancelled) return;
 
-            this.turnOfHunterBeta(quote);
+            await this.turnOfSeer();
             if(this.cancelled) return;
+
+            const daylightPrefix = await this.turnOfWitch();
+            if(this.cancelled) return;
+
+            const quote = await this.turnOfDaylight(daylightPrefix);
+            if(this.cancelled) return;
+
+            this.turnOfHunter(quote);
+            if(this.cancelled) return;
+
             if(this.isGameEnded()) break;
 
-            const hasKnight = await this.turnOfDiscussBeta(quote);
+            const hasKnight = await this.turnOfDiscuss(quote);
             if(this.cancelled) return;
+
             if(hasKnight) {
-                await this.turnOfKnightBeta();
+                await this.turnOfKnight();
                 if(this.cancelled) return;
+
                 continue;
             } else {
                 this.isVoting = true;
-                await this.turnOfVoteBeta();
+                await this.turnOfVote();
                 if(this.cancelled) return;
+
                 await PromiseTimer.waitUntil(() => {
                     if(this.cancelled) return true;
                     return this.isVoting == false;
                 });
                 if(this.cancelled) return;
 
-                this.turnOfHunterBeta(quote);
+                this.turnOfHunter(quote);
                 if(this.cancelled) return;
+
                 if(this.isGameEnded()) break;
             }
         }
@@ -351,7 +360,7 @@ export class Werewolves {
         return await this.rest.channels(channelId).messages(messageId).delete().catch(this.bot.failedToDeleteMessage(name));
     }
 
-    private async turnOfWerewolvesBeta() {
+    private async turnOfWerewolves() {
         if(this.debugVoteOnly) return;
 
         this.state = GameState.WEREWOLVES;
@@ -390,7 +399,7 @@ export class Werewolves {
         }
     }
 
-    private async turnOfSeerBeta() {
+    private async turnOfSeer() {
         if(this.debugVoteOnly) return;
         
         if(this.getSeers().find(p => p.alive)) {
@@ -436,7 +445,7 @@ export class Werewolves {
         }
     }
 
-    private async turnOfWitchBeta(): Promise<string> {
+    private async turnOfWitch(): Promise<string> {
         if(this.debugVoteOnly) return "VoteOnly";
         
         this.witchTarget = -1;
@@ -563,7 +572,7 @@ export class Werewolves {
         return true;
     }
 
-    private async turnOfDaylightBeta(prefix: string): Promise<string> {
+    private async turnOfDaylight(prefix: string): Promise<string> {
         if(this.debugVoteOnly) return "VoteOnly";
 
         this.votes = [];
@@ -590,7 +599,7 @@ export class Werewolves {
                 `${prefix}天亮了。昨晚死亡的是 <@${wolvesKilled?.member.id}>。`);
     }
 
-    private async turnOfHunterBeta(quote: string): Promise<boolean> {
+    private async turnOfHunter(quote: string): Promise<boolean> {
         if(this.debugVoteOnly) return false;
 
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
@@ -649,7 +658,7 @@ export class Werewolves {
         return !!hunter;
     }
 
-    private async turnOfDiscussBeta(quote: string): Promise<boolean> {
+    private async turnOfDiscuss(quote: string): Promise<boolean> {
         this.state = GameState.DISCUSS;
         Logger.log("state (" + this.guildId + ") -> discuss");
 
@@ -727,7 +736,7 @@ export class Werewolves {
         }
     }
 
-    private async turnOfKnightBeta() {
+    private async turnOfKnight() {
         if(this.debugVoteOnly) return;
 
         let cancelled = false;
@@ -771,7 +780,7 @@ export class Werewolves {
         }
     }
 
-    private async turnOfVoteBeta(appendEmbeds: any[] = []) {
+    private async turnOfVote(appendEmbeds: any[] = []) {
         this.state = GameState.VOTE;
         Logger.log("state (" + this.guildId + ") -> vote");
 
@@ -791,11 +800,11 @@ export class Werewolves {
         this.voteMsgId = r.id;
 
         this.currentTimeout = setTimeout(() => {
-            this.endOfVoteBeta();
+            this.endOfVote();
         }, voteTime * 1000);
     }
 
-    private async endOfVoteBeta() {
+    private async endOfVote() {
         Logger.log("endOfVote() called");
         await this.deleteMessage(this.threadChannel!!, this.voteMsgId!!, "vote-msg");
 
@@ -818,7 +827,7 @@ export class Werewolves {
 
         if(t > 1) {
             this.voteLimit = t;
-            this.turnOfVoteBeta([
+            this.turnOfVote([
                 {
                     ...this.getEmbedBase(),
                     description: `有 ${t} 個人同票，需要重新投票！`
