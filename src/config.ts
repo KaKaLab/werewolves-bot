@@ -8,10 +8,6 @@ export class BotConfig {
 
     constructor() {
         this.load();
-
-        if(!this.data.token || this.data.token == '') {
-            throw new Error('Discord bot token is not set!');
-        }
     }
 
     public load() {

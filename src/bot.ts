@@ -1,12 +1,13 @@
 import { DMChannel, Guild, Message } from 'discord.js';
-import { Client } from 'discord.js';
+import { Client, KInteractionWS } from 'discord.js';
 import { BotConfig } from './config';
 import { GameState, Werewolves } from './game/werewolves';
 import { Logger } from './utils/logger';
 import { CommandOptionType, SlashPatch } from './utils/slash';
 import * as util from "util";
+import { EventEmitter } from 'stream';
 
-export class WerewolvesBot {
+export class WerewolvesBot extends EventEmitter {
     public api: Client;
     public config: BotConfig;
 
@@ -17,6 +18,8 @@ export class WerewolvesBot {
     public static instance: WerewolvesBot;
 
     constructor() {
+        super();
+
         WerewolvesBot.instance = this;
         this.config = new BotConfig();
         this.api = new Client({
@@ -33,6 +36,7 @@ export class WerewolvesBot {
                 type: "WATCHING"
             });
             await this.api.user?.setStatus("dnd");
+            this.emit("ready");
             
             await this.registerSlashCommands();
         });
@@ -87,33 +91,7 @@ export class WerewolvesBot {
 
                 if(sub.name == "summon") {
                     running = true;
-                    let game = this.games.find(g => g.guildId == ev.guild_id);
-                    if(!game) {
-                        Logger.info("Game not exist for guild " + ev.guild_id + ", creating it...");
-                        game = new Werewolves(this, ev.guild_id);
-                        await game.init();
-                        game.prepareLobby();
-                        this.games.push(game);
-                    }
-
-                    if(game.inProgress) {
-                        // @ts-ignore
-                        const api: any = this.api.api;
-                        await api.interactions(ev.id, ev.token).callback.post({
-                            type: 4,
-                            data: {
-                                embeds: [
-                                    {
-                                        ...this.getEmbedBase(),
-                                        description: "遊戲正在進行中，無法使用。"
-                                    }
-                                ]
-                            }
-                        }).catch(this.failedToSendMessage("cmd-game-in-progress"));
-                    } else {
-                        await game.cleanGameMessages();
-                        await game.showLobby(ev);
-                    }
+                    await this.spawnLobby(ev.guild_id, ev);
                     running = false;
                     return;
                 }
@@ -249,8 +227,49 @@ export class WerewolvesBot {
                 return;
             }
         });
+    }
 
-        this.api.login(this.config.getToken());
+    public async spawnLobby(guildId: string, ev: KInteractionWS | null = null) {
+        let game = this.games.find(g => g.guildId == guildId);
+        if(!game) {
+            Logger.info("Game not exist for guild " + guildId + ", creating it...");
+            game = new Werewolves(this, guildId);
+            await game.init();
+            game.prepareLobby();
+            this.games.push(game);
+        }
+
+        if(game.inProgress) {
+            if(ev) {
+                // @ts-ignore
+                const api: any = this.api.api;
+                await api.interactions(ev.id, ev.token).callback.post({
+                    type: 4,
+                    data: {
+                        embeds: [
+                            {
+                                ...this.getEmbedBase(),
+                                description: "遊戲正在進行中，無法使用。"
+                            }
+                        ]
+                    }
+                }).catch(this.failedToSendMessage("cmd-game-in-progress"));
+            } else {
+                // ?
+            }
+        } else {
+            await game.cleanGameMessages();
+            await game.showLobby(ev);
+        }
+    }
+
+    public async login() {
+        const token = this.config.getToken();
+        if(!token || token == '') {
+            throw new Error('Discord bot token is not set!');
+        }
+
+        await this.api.login(token);
     }
 
     public async registerSlashCommands() {

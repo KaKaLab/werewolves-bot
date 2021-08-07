@@ -25,6 +25,7 @@ var io = readline.createInterface({
 });
 
 var bot = new WerewolvesBot();
+bot.login();
 
 function kPrompt() {
     io.question("> ", ans => {

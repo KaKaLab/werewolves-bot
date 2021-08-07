@@ -404,7 +404,7 @@ export class LiteralText extends KText<LiteralText> {
         var result = '';
 
         const b = this.text;
-        for(var i=0; i<result.length; i++) {
+        for(var i=0; i<b.length; i++) {
             if(b[i] == KTextColor.COLOR_CHAR && KTextColor.mcCodes().includes(b[i + 1])) {
                 i += 2;
             } else {
@@ -480,7 +480,7 @@ export class TranslateText extends KText<TranslateText> {
         var result = '';
 
         const b = this.translate;
-        for(var i=0; i<result.length; i++) {
+        for(var i=0; i<b.length; i++) {
             if(b[i] == KTextColor.COLOR_CHAR && KTextColor.mcCodes().includes(b[i + 1])) {
                 i += 2;
             } else {

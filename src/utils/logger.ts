@@ -6,7 +6,8 @@ export enum LogLevel {
     info,
     warn,
     error,
-    fatal 
+    fatal,
+    silent
 }
 
 export class Logger {

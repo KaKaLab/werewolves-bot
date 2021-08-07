@@ -1690,6 +1690,18 @@ export class Werewolves {
         const api: any = this.bot.api.api;
 
         if(!interaction) {
+            const chn = this.config.getGameChannel();
+            if(chn && chn != "") {
+                const bot = this.bot.api;
+                let t = bot.guilds.cache.get(this.guildId)!!.channels.cache.get(chn);
+                if(t instanceof TextChannel) {
+                    this.gameChannel = t;
+                }
+            } else {
+                // Invalid
+                return;
+            }
+
             Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
             const r = await api.channels(this.gameChannel!!.id).messages.post({
                 data: this.getLobbyMessage()
