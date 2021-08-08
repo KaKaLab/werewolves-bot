@@ -77,9 +77,11 @@ export class BotGuildConfig {
         this.save();
     }
 
+    /**
+     * Move old options to new options, or convert from old format to
+     * new format, and delete unused/old options.
+     */
     public upgrade() {
-        this.data["enableBeta"] = undefined;
-
         if(this.data.version == 0) {
             this.data.version = 1;
             this.data["enableBeta"] = undefined;
