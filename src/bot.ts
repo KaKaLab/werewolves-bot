@@ -322,7 +322,7 @@ export class WerewolvesBot extends EventEmitter {
                     },
                     {
                         name: "stop-the-game-for-sure-plz",
-                        description: "超長的指令，如果有特殊原因需要重開遊戲，你會需要它。",
+                        description: "超長的指令，如果有特殊原因需要關閉遊戲，你會需要它。",
                         type: CommandOptionType.SUB_COMMAND
                     },
                     {
