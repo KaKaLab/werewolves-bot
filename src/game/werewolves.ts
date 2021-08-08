@@ -177,7 +177,7 @@ export class Werewolves {
 
         this.players.forEach(v => {
             if(v.choice >= 0) {
-                this.votes[v.choice].votes++;
+                this.votes[v.choice].votes += (v.isSheriff ? 2 : 1);
             }
         });
     }
@@ -291,6 +291,16 @@ export class Werewolves {
 
             const quote = await this.turnOfDaylight(daylightPrefix);
             if(this.cancelled) return;
+
+            if(this.daysCount == 1) {
+                const sheriff = this.players.find(p => p.isSheriff);
+                if(sheriff) {
+                    await this.bot.sendMessage(this.threadChannel!!, this.bot.getCompactedMessageWithEmbed(
+                        `<@${sheriff.member.id}> 是警長。`
+                    ));
+                    if(this.cancelled) return;
+                }
+            }
 
             await this.turnOfHunter(quote);
             if(this.cancelled) return;
@@ -993,9 +1003,12 @@ export class Werewolves {
         const hunterCount = settings.hunter;
         const knightCount = settings.knight;
         const werewolvesCount = settings.werewolves;
+
+        const features = this.config.getFeatures();
         const {
             knight: knightThreshold,
-            couples: couplesThreshold
+            couples: couplesThreshold,
+            sheriff: sheriffThreshold
         } = this.config.getThresholds();
 
         let maxRole = seerCount;
@@ -1032,8 +1045,9 @@ export class Werewolves {
             counter++;
         }
 
-        // -- Couple binding
-        if(b >= couplesThreshold) {
+        // -- Game features
+
+        if(features.hasCouples && b >= couplesThreshold) {
             const indices: number[] = [];
             for(let i=0; i<b; i++) {
                 indices.push(i);
@@ -1043,6 +1057,17 @@ export class Werewolves {
             const x = this.players[indices.shift()!!];
             const y = this.players[indices.shift()!!];
             x.couple = y;
+        }
+
+        if(features.hasSheriff && b >= sheriffThreshold) {
+            const indices: number[] = [];
+            for(let i=0; i<b; i++) {
+                indices.push(i);
+            }
+            indices.sort(() => Math.random() - 0.5);
+            
+            const x = this.players[indices.shift()!!];
+            x.isSheriff = true;
         }
     }
 
