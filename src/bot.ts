@@ -150,25 +150,30 @@ export class WerewolvesBot extends EventEmitter {
                     }
 
                     const run = function () {
-                        const isStr = typeof eval("this." + key.value) == "string";
+                        const type = typeof eval("this.data." + key.value);
+                        const isStr = type == "string";
+                        const isObj = type == "object";
+
                         if(action.name == "set") {
                             if(value.value.match(/[\(\)\[\]]/)) {
                                 Logger.warn("Possibly malicious value in setting: " + value.value)
                                 throw new Error();
                             }
 
-                            eval(`this.${key.value} = ${isStr ? '"' : ""}${value.value}${isStr ? '"' : ""};`);
+                            eval(`this.data.${key.value} = ${isStr ? '"' : (isObj ? "{..." : "")}${value.value}${isStr ? '"' : (isObj ? "}" : "")};`);
+                        } else if(action.name == "revert") {
+                            eval(`this.data.${key.value} = ${isObj ? "{..." : ""}this.defaults.${key.value}${isObj ? "}" : ""};`);
                         }
-                        return eval("this." + key.value);
+                        return eval("this.data." + key.value);
                     };
 
                     try {
-                        const result = run.call(game.config.data);
-                        if(action.name == "set") {
+                        const result = run.call(game.config);
+                        if(action.name != "get") {
                             game.config.save();
                         }
 
-                        const msg = `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name == "set" ? "\n該設定會在下回合生效。" : "");
+                        const msg = `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name != "get" ? "\n該設定會在下回合生效。" : "");
                         await this.respondToInteraction(ev, {
                             type: 4,
                             data: this.getCompactedMessageWithEmbed(msg)
@@ -338,7 +343,33 @@ export class WerewolvesBot extends EventEmitter {
                                         name: "key",
                                         description: "設定的選項名稱。",
                                         type: CommandOptionType.STRING,
-                                        choices: settingOptions,
+                                        choices: [
+                                            {
+                                                name: "roleMaxPlayers",
+                                                value: "roleMaxPlayers"
+                                            },
+                                            ...settingOptions
+                                        ],
+                                        required: true
+                                    }
+                                ]
+                            },
+                            {
+                                name: "revert",
+                                description: "將選項恢復為預設值。",
+                                type: CommandOptionType.SUB_COMMAND,
+                                options: [
+                                    {
+                                        name: "key",
+                                        description: "設定的選項名稱。",
+                                        type: CommandOptionType.STRING,
+                                        choices: [
+                                            {
+                                                name: "roleMaxPlayers",
+                                                value: "roleMaxPlayers"
+                                            },
+                                            ...settingOptions
+                                        ],
                                         required: true
                                     }
                                 ]
