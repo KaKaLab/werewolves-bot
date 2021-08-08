@@ -2,7 +2,6 @@ import { GuildMember } from "discord.js";
 import { EventEmitter } from "stream";
 import { Role } from "./roles";
 
-
 export class Player extends EventEmitter {
     public member: GuildMember;
     public number: number;
