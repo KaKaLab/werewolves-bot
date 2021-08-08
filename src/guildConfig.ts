@@ -14,10 +14,34 @@ type RoleMaxPlayersStruct = {
 };
 
 export class BotGuildConfig {
-    public data: any;
     public id: string;
+    public static readonly defaultConfig = {
+        gameChannel: "",
+        minPlayers: 6,
+        maxPlayers: 12,
+        debugVoteOnly: false,
+        debugShortTime: false,
+        roleMaxPlayers: {
+            seer: 1,
+            witch: 1,
+            hunter: 1,
+            knight: 1,
+            werewolves: 2,
+        },
+        enableBeta: false,
+        knightThreshold: 6,
+        couplesThreshold: 6,
+        version: 0
+    };
+    
+    private get defaults() {
+        return BotGuildConfig.defaultConfig;
+    }
+
+    public data: typeof BotGuildConfig.defaultConfig;
 
     constructor(guildId: string) {
+        this.data = BotGuildConfig.defaultConfig;
         this.id = guildId;
         this.load();
     }
@@ -37,24 +61,10 @@ export class BotGuildConfig {
             fs.writeFileSync(GUILD_DIR_NAME + "/" + this.id + "/" + CONFIG_FILE_NAME, "{}");
         }
 
-        this.data = JSON.parse(fs.readFileSync(GUILD_DIR_NAME + "/" + this.id + "/" + CONFIG_FILE_NAME).toString());
+        const config = JSON.parse(fs.readFileSync(GUILD_DIR_NAME + "/" + this.id + "/" + CONFIG_FILE_NAME).toString());
         this.data = {
-            gameChannel: "",
-            minPlayers: 6,
-            maxPlayers: 12,
-            debugVoteOnly: false,
-            debugShortTime: false,
-            roleMaxPlayers: {
-                seer: 1,
-                witch: 1,
-                hunter: 1,
-                knight: 1,
-                werewolves: 2,
-            },
-            enableBeta: false,
-            knightThreshold: 6,
-            version: 0,
-            ...this.data
+            ...BotGuildConfig.defaultConfig,
+            ...config
         };
         
         this.upgrade();
@@ -81,10 +91,6 @@ export class BotGuildConfig {
 
     public getGameChannel(): string {
         return this.data.gameChannel;
-    }
-
-    public getGuildId(): string {
-        return this.data.guildId;
     }
 
     public getMaxPlayers(): number {
