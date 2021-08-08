@@ -28,9 +28,15 @@ export class Logger {
         if (Logger.level > level) return;
         const f = this.prefixFormat.clone();
         const tag = LiteralText.of(`[${name}]`).setColor(color);
+        const date = new Date();
+
+        const zeroPrefixed = (n: number) => {
+            return `${n < 10 ? "0" : ""}${n}`;
+        }
+        const dateStr = `${date.getFullYear()}-${zeroPrefixed(date.getMonth())}-${zeroPrefixed(date.getDate())} ${zeroPrefixed(date.getHours())}:${zeroPrefixed(date.getMinutes())}:${zeroPrefixed(date.getSeconds())}`
         const msg = f.addWith(
             tag, t, 
-            LiteralText.of(new Date().toISOString()).setColor(KTextColor.darkGray)
+            LiteralText.of(dateStr).setColor(KTextColor.darkGray)
         ).toAscii();
 
         process.stdout.cursorTo(0);
