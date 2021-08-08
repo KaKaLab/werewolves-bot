@@ -118,3 +118,6 @@ npm run exec
 ## 如何貢獻
 我們真的是很努力對抗各種 Bug 才把它做出來的，我們也很歡迎你來幫我們解決 Bug！\
 你可以自己 clone/fork 下來然後修改程式碼，如果有成功解決的話，歡迎來投 pull request！
+
+## 參考資料
+[Wikipedia](https://zh.wikipedia.org/wiki/狼人殺)
