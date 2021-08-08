@@ -21,6 +21,10 @@ export enum GameState {
     ENDED
 }
 
+export enum GameEndReason {
+    COUPLE_WIN, WOLF_WIN, GREAT_WIN, CUSTOM
+}
+
 type PlayableChannel = TextChannel;
 
 export class Werewolves {
@@ -57,6 +61,7 @@ export class Werewolves {
     public startTime = new Date();
 
     private isVoting = false;
+    private endReason: GameEndReason = GameEndReason.CUSTOM;
 
     public get isBeta() {
         return this.config.isBetaEnabled();
@@ -249,10 +254,18 @@ export class Werewolves {
 
         const b = this.players.filter(p => p.alive).length;
         const w = this.getWerewolves().filter(p => p.alive).length;
+        const c = this.getCouples().filter(p => p.alive).length;
+
+        if(c > 0 && b <= 3) {
+            this.endReason = GameEndReason.COUPLE_WIN;
+            return true;
+        }
 
         if(w == 0) {
+            this.endReason = GameEndReason.GREAT_WIN;
             return true;
         } else if(b - w <= 1) {
+            this.endReason = GameEndReason.WOLF_WIN;
             return true;
         } else {
             return false;
@@ -310,14 +323,17 @@ export class Werewolves {
             }
         }
 
-        let gameMsg = "";
-        const b = this.players.filter(p => p.alive).length;
-        const w = this.getWerewolves().filter(p => p.alive).length;
-
-        if(w == 0) {
-            gameMsg = "遊戲結束，好人勝利。";
-        } else if(b - w <= 1) {
-            gameMsg = "遊戲結束，狼人勝利。";
+        let gameMsg = "遊戲結束。";
+        switch(this.endReason) {
+            case GameEndReason.COUPLE_WIN:
+                gameMsg = "特殊結局，CP 勝利。";
+                break;
+            case GameEndReason.GREAT_WIN:
+                gameMsg = "遊戲結束，好人勝利。";
+                break;
+            case GameEndReason.WOLF_WIN:
+                gameMsg = "遊戲結束，狼人勝利。";
+                break;
         }
 
         if(this.cancelled) return;
@@ -1012,6 +1028,17 @@ export class Werewolves {
             p.role = role;
             counter++;
         }
+
+        // -- Couple binding
+        const indices: number[] = [];
+        for(let i=0; i<counter; i++) {
+            indices.push(i);
+        }
+        indices.sort(() => Math.random() - 0.5);
+        
+        const x = this.players[indices.shift()!!];
+        const y = this.players[indices.shift()!!];
+        x.couple = y;
     }
 
     public getAliveCount() {
@@ -1570,6 +1597,10 @@ export class Werewolves {
             let suffix = "";
             if(p.role == Role.WEREWOLVES) {
                 suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
+            }
+
+            if(!!p.couple) {
+                suffix += "\n**你和 " + p.couple.member.user.tag + " 是 CP。**";
             }
 
             p.member.send({

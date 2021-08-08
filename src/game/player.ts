@@ -1,8 +1,9 @@
 import { GuildMember } from "discord.js";
+import { EventEmitter } from "stream";
 import { Role } from "./roles";
 
 
-export class Player {
+export class Player extends EventEmitter {
     public member: GuildMember;
     public number: number;
     public alive: boolean = true; 
@@ -14,15 +15,17 @@ export class Player {
     public couple: Player | null = null;
 
     constructor(number: number, member: GuildMember) {
+        super();
         this.number = number;
         this.member = member;
     }
 
     public kill() {
         this.alive = false;
-    }
+        this.emit("killed");
 
-    public toString() {
-        return `Player #${this.number}, alive=${this.alive}, role=${this.role}`;
+        if(this.couple && this.couple.alive) {
+            this.couple.kill();
+        }
     }
 }
