@@ -5,13 +5,9 @@ import { Logger } from './utils/logger';
 const CONFIG_FILE_NAME: string = 'config.json';
 const GUILD_DIR_NAME: string = 'guild_data';
 
-type RoleMaxPlayersStruct = {
-    seer: number,
-    witch: number,
-    hunter: number,
-    knight: number,
-    werewolves: number
-};
+type ConfigStruct = typeof BotGuildConfig.defaultConfig;
+type RoleMaxPlayersStruct = ConfigStruct["roleMaxPlayers"];
+type ThresholdsStruct = ConfigStruct["thresholds"];
 
 export class BotGuildConfig {
     public id: string;
@@ -28,13 +24,15 @@ export class BotGuildConfig {
             knight: 1,
             werewolves: 2,
         },
+        thresholds: {
+            knight: 7,
+            couples: 7
+        },
         enableBeta: false,
-        knightThreshold: 6,
-        couplesThreshold: 6,
         version: 0
     };
     
-    private get defaults() {
+    public get defaults() {
         return BotGuildConfig.defaultConfig;
     }
 
@@ -80,9 +78,9 @@ export class BotGuildConfig {
             ...this.data.roleMaxPlayers
         };
     }
-
-    public getKnightThreshold(): number {
-        return this.data.knightThreshold;
+    
+    public getThresholds(): ThresholdsStruct {
+        return this.data.thresholds;
     }
 
     public save() {

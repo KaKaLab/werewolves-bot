@@ -993,13 +993,16 @@ export class Werewolves {
         const hunterCount = settings.hunter;
         const knightCount = settings.knight;
         const werewolvesCount = settings.werewolves;
-        const knightThreshold = this.config.getKnightThreshold();
+        const {
+            knight: knightThreshold,
+            couples: couplesThreshold
+        } = this.config.getThresholds();
 
         let maxRole = seerCount;
         maxRole += witchCount;
         maxRole += hunterCount;
         maxRole += werewolvesCount;
-        if(b > knightThreshold) maxRole += knightCount;
+        if(b >= knightThreshold) maxRole += knightCount;
         
         while (counter < maxRole) {
             const innocents = this.players.filter(p => p.role == Role.INNOCENT);
@@ -1030,15 +1033,17 @@ export class Werewolves {
         }
 
         // -- Couple binding
-        const indices: number[] = [];
-        for(let i=0; i<counter; i++) {
-            indices.push(i);
+        if(b >= couplesThreshold) {
+            const indices: number[] = [];
+            for(let i=0; i<b; i++) {
+                indices.push(i);
+            }
+            indices.sort(() => Math.random() - 0.5);
+            
+            const x = this.players[indices.shift()!!];
+            const y = this.players[indices.shift()!!];
+            x.couple = y;
         }
-        indices.sort(() => Math.random() - 0.5);
-        
-        const x = this.players[indices.shift()!!];
-        const y = this.players[indices.shift()!!];
-        x.couple = y;
     }
 
     public getAliveCount() {
