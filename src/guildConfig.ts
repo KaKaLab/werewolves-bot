@@ -5,9 +5,12 @@ import { Logger } from './utils/logger';
 const CONFIG_FILE_NAME: string = 'config.json';
 const GUILD_DIR_NAME: string = 'guild_data';
 
-type ConfigStruct = typeof BotGuildConfig.defaultConfig;
+type ConfigStruct = typeof BotGuildConfig.defaultConfig & {
+    [index: string]: any
+};
 type RoleMaxPlayersStruct = ConfigStruct["roleMaxPlayers"];
 type ThresholdsStruct = ConfigStruct["thresholds"];
+type FeaturesStruct = ConfigStruct["features"];
 
 export class BotGuildConfig {
     public id: string;
@@ -26,17 +29,22 @@ export class BotGuildConfig {
         },
         thresholds: {
             knight: 7,
-            couples: 7
+            couples: 7,
+            sheriff: 7
         },
-        enableBeta: false,
-        version: 0
+        features: {
+            beta: false,
+            hasCouples: false,
+            hasSheriff: false
+        },
+        version: 1
     };
     
     public get defaults() {
         return BotGuildConfig.defaultConfig;
     }
 
-    public data: typeof BotGuildConfig.defaultConfig;
+    public data: ConfigStruct;
 
     constructor(guildId: string) {
         this.data = BotGuildConfig.defaultConfig;
@@ -70,7 +78,14 @@ export class BotGuildConfig {
     }
 
     public upgrade() {
-        
+        this.data["enableBeta"] = undefined;
+
+        if(this.data.version == 0) {
+            this.data.version = 1;
+            this.data["enableBeta"] = undefined;
+            this.data["knightThreshold"] = undefined;
+            this.data["couplesThreshold"] = undefined;
+        }
     }
 
     public getRoleMaxPlayers(): RoleMaxPlayersStruct {
@@ -78,9 +93,13 @@ export class BotGuildConfig {
             ...this.data.roleMaxPlayers
         };
     }
-    
+
     public getThresholds(): ThresholdsStruct {
         return this.data.thresholds;
+    }
+
+    public getFeatures(): FeaturesStruct {
+        return this.data.features;
     }
 
     public save() {

@@ -18,11 +18,11 @@
 > * `knight` 代表「騎士」，預設為 `1`。
 > * `werewolves` 代表「狼人」，預設為 `2`。
 
-* ### `knightThreshold`
-> 開始出現騎士所需要的玩家數量。預設為 `6`。
-
-* ### `couplesThreshold`
-> 開始出現 CP 所需要的玩家數量。預設為 `6`。
+* ### `thresholds.[role]`
+> 這些選項代表的是開始出現`role` 所需要的玩家數量。其中：
+> * `knight` 代表「騎士」，預設為 `7`。
+> * `werewolves` 代表「CP」，預設為 `7`。
+> * `sheriff` 代表「警長」，預設為 `7`。
 
 * ### `maxPlayers`
 > 遊戲玩家的數量上限。預設為 `12`。

@@ -279,9 +279,25 @@ export class WerewolvesBot extends EventEmitter {
             "roleMaxPlayers.hunter",
             "roleMaxPlayers.knight",
             "roleMaxPlayers.werewolves",
+            "thresholds.knight",
+            "thresholds.couples",
+            "thresholds.sheriff",
+            "features.beta",
+            "features.hasCouples",
+            "features.hasSheriff",
             "maxPlayers", "minPlayers",
-            "knightThreshold", "couplesThreshold",
-            "debugShortTime", "enableBeta", "debugVoteOnly"
+            "debugShortTime", "debugVoteOnly"
+        ].map(v => {
+            return {
+                name: v,
+                value: v
+            };
+        });
+
+        const settingOptionsAddition = [
+            "roleMaxPlayers",
+            "thresholds",
+            "features"
         ].map(v => {
             return {
                 name: v,
@@ -344,10 +360,7 @@ export class WerewolvesBot extends EventEmitter {
                                         description: "設定的選項名稱。",
                                         type: CommandOptionType.STRING,
                                         choices: [
-                                            {
-                                                name: "roleMaxPlayers",
-                                                value: "roleMaxPlayers"
-                                            },
+                                            ...settingOptionsAddition,
                                             ...settingOptions
                                         ],
                                         required: true
@@ -364,10 +377,7 @@ export class WerewolvesBot extends EventEmitter {
                                         description: "設定的選項名稱。",
                                         type: CommandOptionType.STRING,
                                         choices: [
-                                            {
-                                                name: "roleMaxPlayers",
-                                                value: "roleMaxPlayers"
-                                            },
+                                            ...settingOptionsAddition,
                                             ...settingOptions
                                         ],
                                         required: true
