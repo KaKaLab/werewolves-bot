@@ -1,4 +1,4 @@
-# werewolves-bot
+# 狼人殺機器人
 這是一個可以讓你和朋朋玩狼人殺的機器人！\
 [🔗 Bot 邀請連結](https://discord.com/api/oauth2/authorize?client_id=872299329040310345&permissions=8&scope=applications.commands%20bot)
 
