@@ -7,12 +7,14 @@ import { CommandOptionType, SlashPatch } from './utils/slash';
 import * as util from "util";
 import { EventEmitter } from 'stream';
 import { blacklist } from "./static/blacklist.json";
+import { Markdown } from './utils/links';
 
 export class WerewolvesBot extends EventEmitter {
     public api: Client;
     public config: BotConfig;
 
     public static readonly themeColor = 0xe03434;
+    public static readonly version = "v2.0-beta";
 
     private canAcceptConsoleInput = true;
 
@@ -104,7 +106,13 @@ export class WerewolvesBot extends EventEmitter {
                                     fields: [
                                         {
                                             name: "開發人員",
-                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>"
+                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>",
+                                            inline: true
+                                        },
+                                        {
+                                            name: "Icon設計",
+                                            value: Markdown.links.twitter("ItsArcal139"),
+                                            inline: true
                                         }
                                     ]
                                 }
@@ -482,8 +490,12 @@ export class WerewolvesBot extends EventEmitter {
         return {
             color: WerewolvesBot.themeColor,
             author: {
-                name: this.api.user?.username,
+                name: this.api.user?.username, // + " " + WerewolvesBot.version,
                 icon_url: this.api.user?.avatarURL()
+            },
+            footer: {
+                icon_url: "https://pbs.twimg.com/profile_images/1320302625678446592/fDr8uq-m_400x400.jpg",
+                text: "Icon設計: @ItsArcal139"
             }
         };
     }
