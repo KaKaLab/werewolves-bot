@@ -12,6 +12,8 @@ export class WerewolvesBot extends EventEmitter {
     public api: Client;
     public config: BotConfig;
 
+    public static readonly themeColor = 0xe03434;
+
     private canAcceptConsoleInput = true;
 
     private games: Werewolves[] = [];
@@ -478,7 +480,7 @@ export class WerewolvesBot extends EventEmitter {
 
     public getEmbedBase(): any {
         return {
-            color: 0xffa970,
+            color: WerewolvesBot.themeColor,
             author: {
                 name: this.api.user?.username,
                 icon_url: this.api.user?.avatarURL()
