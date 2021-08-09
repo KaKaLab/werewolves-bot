@@ -30,7 +30,7 @@ export class WerewolvesBot extends EventEmitter {
     public config: BotConfig;
 
     public static readonly themeColor = 0xe03434;
-    public static readonly version = "v2.0-beta";
+    public static readonly version = "v2.0";
 
     private canAcceptConsoleInput = true;
 
@@ -481,7 +481,7 @@ export class WerewolvesBot extends EventEmitter {
         return {
             color: WerewolvesBot.themeColor,
             author: {
-                name: this.api.user?.username, // + " " + WerewolvesBot.version,
+                name: this.api.user?.username,
                 icon_url: this.api.user?.avatarURL() ?? undefined
             }
         };
