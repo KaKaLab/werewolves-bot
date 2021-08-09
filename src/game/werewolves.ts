@@ -1,7 +1,7 @@
 import {
-    ButtonInteraction,
-    Client, CommandInteraction, Guild, GuildChannel, GuildMember,
-    Interaction, Message, MessageActionRowOptions, MessageComponentInteraction, TextChannel, ThreadChannel
+    CommandInteraction, Interaction, MessageComponentInteraction,
+    Message, MessageActionRowOptions,
+    TextChannel, ThreadChannel
 } from "discord.js";
 import { WerewolvesBot } from "../bot";
 import { BotGuildConfig } from "../guildConfig";
@@ -37,8 +37,6 @@ type WitchActions = {
     save: "解藥"
 };
 
-type WitchActionKeys = keyof WitchActions;
-
 export class Werewolves {
     public players: Player[] = []
     private votes: Player[] = []
@@ -56,7 +54,7 @@ export class Werewolves {
 
     private wolvesKilled = -1;
     private witchTarget = -1;
-    private witchAction: "kill" | "save" | null = null;
+    private witchAction: keyof WitchActions | null = null;
     private voteLimit = -1;
 
     private voteQuote = "";
@@ -1216,7 +1214,7 @@ export class Werewolves {
         };
     }
 
-    private getWitchMessageB(type: WitchActions[WitchActionKeys]): any {
+    private getWitchMessageB(type: WitchActions[keyof WitchActions]): any {
         var options = this.players.flatMap(m => {
             const name = (m.member.nickname ?? m.member.user.username) + "#" + m.member.user.discriminator;
             return m.alive ? [
@@ -1744,10 +1742,8 @@ export class Werewolves {
 
         this.threadChannel = null;
         this.players = [];
+        this.votes = [];
         this.state = GameState.READY;
-
-        // Users likely don't expect the bot to start again automatically,
-        // so we don't do that from now
     }
 
     // -- Dump --
