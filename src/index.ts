@@ -18,13 +18,13 @@ if(!supported) {
 
 process.setUncaughtExceptionCaptureCallback(err => {
     try {
+        Logger.error("An uncaught exception occured and it is not safe to continue.");
         Logger.error(err.toString());
-        Logger.error("Exiting...");
     } catch(ex) {
         console.error(err.toString());
         console.error("Exiting...");
+        process.exit(0);
     }
-    process.exit(0);
 });
 
 Logger.level = LogLevel.log;

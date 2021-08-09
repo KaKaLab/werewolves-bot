@@ -1,6 +1,6 @@
 import { EventEmitter } from "stream"
 import { Logger } from "./logger";
-import { PromiseTimer } from "./timeprom";
+import { PromiseTimer } from "./promise";
 
 class NotifyingStorage<T> extends EventEmitter {
     private value: T | null = null;

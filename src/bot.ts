@@ -1,13 +1,28 @@
-import { DMChannel, Guild, Message } from 'discord.js';
-import { Client, KInteractionWS } from 'discord.js';
+import {
+    ApplicationCommand,
+    ApplicationCommandData,
+    Client, CommandInteraction, DMChannel, Guild,
+    InteractionReplyOptions,
+    Message, MessageComponentInteraction
+} from 'discord.js';
+import { ApplicationCommandOptionTypes } from 'discord.js/typings/enums';
 import { BotConfig } from './config';
 import { GameState, Werewolves } from './game/werewolves';
 import { Logger } from './utils/logger';
-import { CommandOptionType, SlashPatch } from './utils/slash';
 import * as util from "util";
 import { EventEmitter } from 'stream';
 import { blacklist } from "./static/blacklist.json";
 import { Markdown } from './utils/links';
+import { PromiseUtil } from './utils/promise';
+
+type LegacyInteractionResponse = {
+    type: number,
+    data: InteractionReplyOptions & {
+        flags?: number
+    }
+};
+
+export type RespondableInteraction = CommandInteraction | MessageComponentInteraction;
 
 export class WerewolvesBot extends EventEmitter {
     public api: Client;
@@ -33,9 +48,9 @@ export class WerewolvesBot extends EventEmitter {
         WerewolvesBot.instance = this;
         this.config = new BotConfig();
         this.api = new Client({
-            partials: ["MESSAGE", "CHANNEL"]
+            partials: ["MESSAGE", "CHANNEL"],
+            intents: ["GUILDS"]
         });
-        SlashPatch.init(this.api);
 
         this.api.on('ready', async () => {
             const user = this.api.user;
@@ -74,30 +89,83 @@ export class WerewolvesBot extends EventEmitter {
 
         let running = false;
 
-        this.api.on("interactionCreate", async (ev) => {
-            if(this.isBlacklisted(ev.member.user.id)) return;
-            if(ev.type != 2) return;
+        this.api.on("interactionCreate", async (interaction) => {
+            if(this.isBlacklisted(interaction.member?.user.id!!)) return;
+            if(!interaction.isCommand()) return;
+            if(!interaction.guildId) return;
+            if(!interaction.member) return;
+
             if(running) {
-                await this.respondToInteraction(ev, {
+                await this.respondToInteraction(interaction, {
                     type: 4,
                     data: this.getCompactedMessageWithEmbed("正在進行其他指令，無法使用。", true)
                 }, "cmd-other-running");
                 return;
             }
 
-            if(ev.data.name == "wolf") {
-                const data = ev.data;
-                const sub = data.options[0];
+            if(interaction.commandName == "wolf") {
+                if(interaction.options.getSubcommandGroup(false) == "settings") {
+                    const action = interaction.options.getSubcommand();
+                    const key = interaction.options.getString("key", true);
+                    const value = interaction.options.getString("value");
 
-                if(sub.name == "summon") {
+                    let game = this.games.find(g => g.guildId == interaction.guildId);
+                    if(!game) {
+                        game = new Werewolves(this, interaction.guildId!!);
+                        await game.init();
+                        game.prepareLobby();
+                        this.games.push(game);
+                    }
+
+                    const run = function () {
+                        const type = typeof eval("this.data." + key);
+                        const isStr = type == "string";
+                        const isObj = type == "object";
+
+                        if(action == "set") {
+                            if(value!!.match(/[\(\)\[\]]/)) {
+                                Logger.warn("Possibly malicious value in setting: " + value)
+                                throw new Error();
+                            }
+
+                            eval(`this.data.${key} = ${isStr ? '"' : (isObj ? "{..." : "")}${value!!}${isStr ? '"' : (isObj ? "}" : "")};`);
+                        } else if(action == "revert") {
+                            eval(`this.data.${key} = ${isObj ? "{..." : ""}this.defaults.${key}${isObj ? "}" : ""};`);
+                        }
+                        return eval("this.data." + key);
+                    };
+
+                    try {
+                        const result = run.call(game.config);
+                        if(action != "get") {
+                            game.config.save();
+                        }
+
+                        const msg = `目前 \`${key}\` 的值為: \`${util.inspect(result)}\`` + (action != "get" ? "\n該設定會在下回合生效。" : "");
+                        await this.respondToInteraction(interaction, {
+                            type: 4,
+                            data: this.getCompactedMessageWithEmbed(msg)
+                        }, "cmd-settings-result");
+                    } catch(ex) {
+                        await this.respondToInteraction(interaction, {
+                            type: 4,
+                            data: this.getCompactedMessageWithEmbed("設定該選項的值的時候發生錯誤。", true)
+                        }, "cmd-settings-error");
+                    }
+                    return;
+                }
+
+                const sub = interaction.options.getSubcommand();
+
+                if(sub == "summon") {
                     running = true;
-                    await this.spawnLobby(ev.guild_id, ev);
+                    await this.spawnLobby(interaction.guildId, interaction);
                     running = false;
                     return;
                 }
 
-                if(sub.name == "credit") {
-                    await this.respondToInteraction(ev, {
+                if(sub == "credit") {
+                    await this.respondToInteraction(interaction, {
                         type: 4,
                         data: {
                             embeds: [
@@ -122,17 +190,17 @@ export class WerewolvesBot extends EventEmitter {
                     return;
                 }
 
-                if(sub.name == "stop-the-game-for-sure-plz") {
+                if(sub == "stop-the-game-for-sure-plz") {
                     var sendEmbed = async (message: string) => {
-                        await this.respondToInteraction(ev, {
+                        await this.respondToInteraction(interaction, {
                             type: 4,
                             data: this.getCompactedMessageWithEmbed(message, true)
                         }, "cmd-force-stop-result");
                     };
 
-                    const game = this.games.find(g => g.guildId == ev.guild_id);
+                    const game = this.games.find(g => g.guildId == interaction.guildId);
                     if(game && game.inProgress) {
-                        const userId = ev.member.user.id;
+                        const userId = interaction.member.user.id;
                         if(game.players.find(p => p.member.id == userId)) {
                             game.stopGame(`<@${userId}> 強制停止了這場遊戲。`);
                             sendEmbed("你強制停止了這場遊戲。");
@@ -146,55 +214,8 @@ export class WerewolvesBot extends EventEmitter {
                     return;
                 }
 
-                if(sub.name == "settings") {
-                    const action = sub.options[0];
-                    const key = action.options[0];
-                    const value = action.options[1];
-
-                    let game = this.games.find(g => g.guildId == ev.guild_id);
-                    if(!game) {
-                        game = new Werewolves(this, ev.guild_id);
-                        await game.init();
-                        game.prepareLobby();
-                        this.games.push(game);
-                    }
-
-                    const run = function () {
-                        const type = typeof eval("this.data." + key.value);
-                        const isStr = type == "string";
-                        const isObj = type == "object";
-
-                        if(action.name == "set") {
-                            if(value.value.match(/[\(\)\[\]]/)) {
-                                Logger.warn("Possibly malicious value in setting: " + value.value)
-                                throw new Error();
-                            }
-
-                            eval(`this.data.${key.value} = ${isStr ? '"' : (isObj ? "{..." : "")}${value.value}${isStr ? '"' : (isObj ? "}" : "")};`);
-                        } else if(action.name == "revert") {
-                            eval(`this.data.${key.value} = ${isObj ? "{..." : ""}this.defaults.${key.value}${isObj ? "}" : ""};`);
-                        }
-                        return eval("this.data." + key.value);
-                    };
-
-                    try {
-                        const result = run.call(game.config);
-                        if(action.name != "get") {
-                            game.config.save();
-                        }
-
-                        const msg = `目前 \`${key.value}\` 的值為: \`${util.inspect(result)}\`` + (action.name != "get" ? "\n該設定會在下回合生效。" : "");
-                        await this.respondToInteraction(ev, {
-                            type: 4,
-                            data: this.getCompactedMessageWithEmbed(msg)
-                        }, "cmd-settings-result");
-                    } catch(ex) {
-                        await this.respondToInteraction(ev, {
-                            type: 4,
-                            data: this.getCompactedMessageWithEmbed("設定該選項的值的時候發生錯誤。", true)
-                        }, "cmd-settings-error");
-                    }
-                    return;
+                if(sub == "settings") {
+                    
                 }
                 
                 return;
@@ -221,29 +242,45 @@ export class WerewolvesBot extends EventEmitter {
             ]
         };
     }
-
-    public async respondToInteraction(ev: KInteractionWS, data: any, name = "general-respond-interaction") {
-        return await this.rest.interactions(ev.id, ev.token).callback.post({ data })
-            .catch(this.failedToSendMessage(name));
+    
+    /** @deprecated */
+    public async respondToInteraction(interaction: RespondableInteraction, data: LegacyInteractionResponse, name = "general-respond-interaction") {
+        let prom = PromiseUtil.noop();
+        switch(data.type) {
+            case 4:
+                prom = interaction.reply({
+                    ...data.data,
+                    ephemeral: data.data.flags == 64
+                });
+                break;
+            case 7:
+                if(!interaction.isMessageComponent()) return;
+                prom = interaction.update(data.data).then();
+                break;
+        }
+        return await prom.catch(this.failedToSendMessage(name));
     }
 
+    /** @deprecated */
     public async sendMessage(channelId: string, data: any, name = "general-msg-post") {
         return await this.rest.channels(channelId).messages.post({
             data
         }).catch(this.failedToSendMessage(name));
     }
 
+    /** @deprecated */
     public async editMessage(channelId: string, messageId: string, data: any, name = "general-msg-patch") {
         return await this.rest.channels(channelId).messages(messageId).patch({
             data
         }).catch(this.failedToEditMessage(name));
     }
 
+    /** @deprecated */
     public async deleteMessage(channelId: string, messageId: string, name = "general-delete-msg") {
         return await this.rest.channels(channelId).messages(messageId).delete().catch(this.failedToDeleteMessage(name));
     }
 
-    public async spawnLobby(guildId: string, ev: KInteractionWS | null = null) {
+    public async spawnLobby(guildId: string, interaction: CommandInteraction | null = null) {
         let game = this.games.find(g => g.guildId == guildId);
         if(!game) {
             Logger.info("Game not exist for guild " + guildId + ", creating it...");
@@ -254,15 +291,15 @@ export class WerewolvesBot extends EventEmitter {
         }
 
         if(game.inProgress) {
-            if(ev) {
-                await this.respondToInteraction(ev, {
+            if(interaction) {
+                await this.respondToInteraction(interaction, {
                     type: 4,
                     data: this.getCompactedMessageWithEmbed("遊戲正在進行中，無法使用。")
                 }, "cmd-game-in-progress");
             }
         } else {
             await game.cleanGameMessages();
-            await game.showLobby(ev);
+            await game.showLobby(interaction);
         }
     }
 
@@ -295,6 +332,7 @@ export class WerewolvesBot extends EventEmitter {
             "features.beta",
             "features.hasCouples",
             "features.hasSheriff",
+            "features.hasTheif",
             "maxPlayers", "minPlayers",
             "debugShortTime", "debugVoteOnly"
         ].map(v => {
@@ -315,7 +353,7 @@ export class WerewolvesBot extends EventEmitter {
             };
         });
 
-        const commands: any = [
+        const commands: ApplicationCommandData[] = [
             {
                 name: "wolf",
                 description: "狼人殺指令操作。",
@@ -323,39 +361,39 @@ export class WerewolvesBot extends EventEmitter {
                     {
                         name: "summon",
                         description: "在當前頻道開始一場狼人殺遊戲。",
-                        type: CommandOptionType.SUB_COMMAND
+                        type: "SUB_COMMAND"
                     },
                     {
                         name: "credit",
                         description: "想了解那些辛苦對抗各種 Bug 的開發人員嗎！！！！",
-                        type: CommandOptionType.SUB_COMMAND
+                        type: "SUB_COMMAND"
                     },
                     {
                         name: "stop-the-game-for-sure-plz",
                         description: "超長的指令，如果有特殊原因需要關閉遊戲，你會需要它。",
-                        type: CommandOptionType.SUB_COMMAND
+                        type: "SUB_COMMAND"
                     },
                     {
                         name: "settings",
                         description: "設定相關的指令。",
-                        type: CommandOptionType.SUB_COMMAND_GROUP,
+                        type: "SUB_COMMAND_GROUP",
                         options: [
                             {
                                 name: "set",
                                 description: "設定選項的值。",
-                                type: CommandOptionType.SUB_COMMAND,
+                                type: "SUB_COMMAND",
                                 options: [
                                     {
                                         name: "key",
                                         description: "設定的選項名稱。",
-                                        type: CommandOptionType.STRING,
+                                        type: "STRING",
                                         choices: settingOptions,
                                         required: true
                                     },
                                     {
                                         name: "value",
                                         description: "選項的值。",
-                                        type: CommandOptionType.STRING,
+                                        type: "STRING",
                                         required: true
                                     }
                                 ]
@@ -363,12 +401,12 @@ export class WerewolvesBot extends EventEmitter {
                             {
                                 name: "get",
                                 description: "取得選項的值。",
-                                type: CommandOptionType.SUB_COMMAND,
+                                type: "SUB_COMMAND",
                                 options: [
                                     {
                                         name: "key",
                                         description: "設定的選項名稱。",
-                                        type: CommandOptionType.STRING,
+                                        type: "STRING",
                                         choices: [
                                             ...settingOptionsAddition,
                                             ...settingOptions
@@ -380,12 +418,12 @@ export class WerewolvesBot extends EventEmitter {
                             {
                                 name: "revert",
                                 description: "將選項恢復為預設值。",
-                                type: CommandOptionType.SUB_COMMAND,
+                                type: "SUB_COMMAND",
                                 options: [
                                     {
                                         name: "key",
                                         description: "設定的選項名稱。",
-                                        type: CommandOptionType.STRING,
+                                        type: "STRING",
                                         choices: [
                                             ...settingOptionsAddition,
                                             ...settingOptions
@@ -399,14 +437,9 @@ export class WerewolvesBot extends EventEmitter {
                 ]
             }
         ];
-        const app = await this.api.fetchApplication();
 
-        await Promise.all(commands.map(async(cmd: any) => {
-            // @ts-ignore
-            const api: any = this.api.api;
-            await api.applications(app.id).guilds(guild.id).commands.post({
-                data: cmd
-            });
+        await Promise.all(commands.map(async (cmd) => {
+            await guild.commands.create(cmd);
         }));
     }
 
@@ -459,10 +492,12 @@ export class WerewolvesBot extends EventEmitter {
             
             this.games.forEach(game => {
                 game.gameChannel?.send({
-                    embed: {
-                        ...this.getEmbedBase(),
-                        description: msg
-                    }
+                    embeds: [
+                        {
+                            ...this.getEmbedBase(),
+                            description: msg
+                        }
+                    ]
                 });
             });
 

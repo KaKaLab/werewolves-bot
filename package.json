@@ -17,8 +17,8 @@
   "author": "Kaka <zapto139@gmail.com>",
   "license": "MIT",
   "dependencies": {
-    "@types/node": "^16.4.6",
-    "discord.js": "^12.5.3",
+    "@types/node": "^16.4.13",
+    "discord.js": "^13.0.1",
     "mocha": "^9.0.3",
     "typescript": "^4.3.5"
   }
