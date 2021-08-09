@@ -1024,6 +1024,7 @@ export class Werewolves {
             const x = this.players[indices.shift()!!];
             const y = this.players[indices.shift()!!];
             x.couple = y;
+            y.couple = x;
         }
 
         if(features.hasSheriff && b >= threshold.sheriff) {
