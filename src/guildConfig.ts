@@ -35,7 +35,8 @@ export class BotGuildConfig {
         features: {
             beta: false,
             hasCouples: false,
-            hasSheriff: false
+            hasSheriff: false,
+            hasThief: false
         },
         version: 1
     };

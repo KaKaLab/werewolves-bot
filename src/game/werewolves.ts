@@ -47,15 +47,11 @@ export class Werewolves {
 
     public guildId: string;
     public config: BotGuildConfig;
-
     public gameChannel: PlayableChannel | null = null;
 
     private threadChannel: ThreadChannel | null = null;
     private lobbyMessage: Message | null = null;
-    // private appId: string | null = null;
-    // private interactionToken: string | null = null;
     private interaction: Interaction | null = null;
-    
     private hasThread = false;
 
     private wolvesKilled = -1;
@@ -992,67 +988,35 @@ export class Werewolves {
     }
 
     public assignRoles() {
-        const roleCount: number[] = [];
-        for(var i=0; i<Role.COUNT; i++) {
-            roleCount.push(0);
-        }
-
         const b = this.players.length;
-        var mod = (b + 1) % 3;
-        var priestCount = ((b + 1) / 9) | 0;
-        var counter = 0;
-
-        const settings = this.config.getRoleMaxPlayers();
-        const seerCount = settings.seer;
-        const witchCount = settings.witch;
-        const hunterCount = settings.hunter;
-        const knightCount = settings.knight;
-        const werewolvesCount = settings.werewolves;
-
+        const roleMaxPlayers = this.config.getRoleMaxPlayers();
         const features = this.config.getFeatures();
-        const {
-            knight: knightThreshold,
-            couples: couplesThreshold,
-            sheriff: sheriffThreshold
-        } = this.config.getThresholds();
+        const threshold = this.config.getThresholds();
 
-        let maxRole = seerCount;
-        maxRole += witchCount;
-        maxRole += hunterCount;
-        maxRole += werewolvesCount;
-        if(b >= knightThreshold) maxRole += knightCount;
-        
-        while (counter < maxRole) {
-            const innocents = this.players.filter(p => p.role == Role.INNOCENT);
-            const r = Math.floor((Role.COUNT - 1) * Math.random());
-            const e = Math.floor(Math.random() * innocents.length);
-            const p = innocents[e];
-            if(!p) break;
-
-            var role = Role.INNOCENT;
-
-            if(r == Role.SEER && roleCount[Role.SEER] < seerCount) {
-                role = Role.SEER;
-            } else if(r == Role.WITCH && roleCount[Role.WITCH] < witchCount) {
-                role = Role.WITCH;
-            } else if(r == Role.HUNTER && roleCount[Role.HUNTER] < hunterCount) {
-                role = Role.HUNTER;
-            } else if(r == Role.KNIGHT && b > knightThreshold && roleCount[Role.KNIGHT] < knightCount) {
-                role = Role.KNIGHT;
-            } else if(r == Role.WEREWOLVES && roleCount[Role.WEREWOLVES] < werewolvesCount) {
-                role = Role.WEREWOLVES;
-            } else {
-                continue;
-            }
-
-            roleCount[role]++;
-            p.role = role;
-            counter++;
+        const roles: Role[] = [];
+        let pushRole = (role: Role, count: number) => {
+            for(let i=0; i<count; i++) roles.push(role);  
+        };
+        pushRole(Role.SEER, roleMaxPlayers.seer);
+        pushRole(Role.WITCH, roleMaxPlayers.witch);
+        pushRole(Role.HUNTER, roleMaxPlayers.hunter);
+        pushRole(Role.WEREWOLVES, roleMaxPlayers.werewolves);
+        if(b >= threshold.knight) {
+            pushRole(Role.KNIGHT, roleMaxPlayers.knight);
         }
+        if(features.hasThief) {
+            pushRole(Role.THIEF, 1);
+            pushRole(Role.INNOCENT, 2);
+        }
+        roles.sort(() => Math.random() - 0.5);
+
+        this.players.forEach(player => {
+            player.role = roles.shift()!!;
+        });
 
         // -- Game features
 
-        if(features.hasCouples && b >= couplesThreshold) {
+        if(features.hasCouples && b >= threshold.couples) {
             const indices: number[] = [];
             for(let i=0; i<b; i++) {
                 indices.push(i);
@@ -1064,7 +1028,7 @@ export class Werewolves {
             x.couple = y;
         }
 
-        if(features.hasSheriff && b >= sheriffThreshold) {
+        if(features.hasSheriff && b >= threshold.sheriff) {
             const indices: number[] = [];
             for(let i=0; i<b; i++) {
                 indices.push(i);

@@ -332,7 +332,7 @@ export class WerewolvesBot extends EventEmitter {
             "features.beta",
             "features.hasCouples",
             "features.hasSheriff",
-            "features.hasTheif",
+            "features.hasThief",
             "maxPlayers", "minPlayers",
             "debugShortTime", "debugVoteOnly"
         ].map(v => {
