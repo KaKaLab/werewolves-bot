@@ -110,11 +110,11 @@ export class Werewolves {
                 const data = blacklist.find(item => item.id == interaction.member!!.user.id)!!.reason;
                 const buff = Buffer.from(data, "base64");
                 const text = buff.toString("utf-8");
-
-                this.bot.respondToInteraction(interaction, {
-                    type: 4,
-                    data: this.bot.getCompactedMessageWithEmbed(text, true)
-                }, "banned");
+                
+                interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(text),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("banned"));
                 return;
             }
 
@@ -386,10 +386,10 @@ export class Werewolves {
             this.wolvesKilled = parseInt(opt.substring(7));
             const killed = this.players.find(p => p.number == this.wolvesKilled);
 
-            await this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed(`你殺掉了 <@${killed!!.member.id}>。`, true)
-            }, "werewolves-killed");
+            await interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(`你殺掉了 <@${killed!!.member.id}>。`),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("werewolves-killed"));
             if(interaction.message instanceof Message) {
                 await interaction.message.delete().catch(Failed.toDeleteMessage("werewolve-source"));
             }
@@ -434,10 +434,11 @@ export class Werewolves {
                 const p = this.players.find(p => p.number == n)!!;
                 const isWolf = p.role == Role.WEREWOLVES;
 
-                await this.bot.respondToInteraction(interaction, {
-                    type: 4,
-                    data: this.bot.getCompactedMessageWithEmbed(`<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`, true)
-                }, "seer-inspected");
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("seer-inspected"));
+
                 if(interaction.message instanceof Message) {
                     await interaction.message.delete().catch(Failed.toDeleteMessage("seer-source"));
                 }
@@ -500,25 +501,25 @@ export class Werewolves {
         const key = interaction.customId.substring(6);
         if(key == "inspect") {
             const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
-            this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed(`本回合狼人殺了 <@${wolvesKilled?.member.id}>。`, true)
-            }, "witch-inspect-killer");
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(`本回合狼人殺了 <@${wolvesKilled?.member.id}>。`),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witch-inspect-killer"));
             return false;
         }
         else if(key == "skip") {
-            this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed("你選擇跳過本回合。", true)
-            }, "witch-skip");
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed("你選擇跳過本回合。"),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witch-skip"));
             await this.threadChannel?.messages.delete(this.witchAMsgId!!).catch(Failed.toDeleteMessage("witch-source"));
             return true;
         } else if(key == "kill") {
             const remains = this.witchRemainSkills[key];
             if(remains <= 0) {
-                this.bot.respondToInteraction(interaction, {
-                    type: 4,
-                    data: this.bot.getCompactedMessageWithEmbed((key == "kill" ? "毒藥" : "解藥") + "已用完。", true)
+                interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed((key == "kill" ? "毒藥" : "解藥") + "已用完。"),
+                    ephemeral: true
                 });
                 return false;
             }
@@ -530,13 +531,10 @@ export class Werewolves {
             } as WitchActions)[key];
             this.witchAction = key;
 
-            this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: {
-                    ...this.getWitchMessageB(type),
-                    flags: 64
-                }
-            }, "witchB");
+            interaction.reply({
+                ...this.getWitchMessageB(type),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witchB"));
             return false;
         }
         return false;
@@ -561,10 +559,10 @@ export class Werewolves {
             save: "解藥"
         }[this.witchAction!!];
 
-        this.bot.respondToInteraction(interaction, {
-            type: 4,
-            data: this.bot.getCompactedMessageWithEmbed(`你選擇對 <@${p.member.id}> ${type}。`, true)
-        }, "witch-action");
+        interaction.reply({
+            ...this.bot.getCompactedMessageWithEmbed(`你選擇對 <@${p.member.id}> ${type}。`),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("witch-action"));
         await this.threadChannel?.messages.delete(this.witchAMsgId!!).catch(Failed.toDeleteMessage("witch-msg-a"));
         return true;
     }
@@ -711,10 +709,8 @@ export class Werewolves {
                 case "knight":
                     const player = this.getPlayerFromInteraction(interaction);
                     if(player!!.role != Role.KNIGHT) {
-                        this.bot.respondToInteraction(interaction, {
-                            type: 4,
-                            data: this.getRoleMismatchMessage(Role.KNIGHT)
-                        }, "discuss-not-knight");
+                        interaction.reply(this.getRoleMismatchMessage(Role.KNIGHT))
+                            .catch(Failed.toReplyInteraction("discuss-not-knight"));
                         continue;
                     }
                     
@@ -762,11 +758,9 @@ export class Werewolves {
             const isWolf = p.role == Role.WEREWOLVES;
     
             (isWolf ? p : player).kill();
-    
-            await this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed( `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`)
-            }, "knight-result");
+
+            await interaction.reply(this.bot.getCompactedMessageWithEmbed( `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`))
+                .catch(Failed.toReplyInteraction("knight-result"));
     
             const msg = interaction.message;
             if(msg instanceof Message) {
@@ -852,25 +846,19 @@ export class Werewolves {
         }
     }
 
-    private async sendMemberNotPlayerInteraction(ev: CommandInteraction | MessageComponentInteraction) {
-        await this.bot.respondToInteraction(ev, {
-            type: 4,
-            data: this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
-        }, "member-not-player");
+    private async sendMemberNotPlayerInteraction(interaction: CommandInteraction | MessageComponentInteraction) {
+        interaction.reply({
+            ...this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。"),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("member-not-player"));
     }
 
-    private async sendPlayerDeadInteraction(ev: CommandInteraction | MessageComponentInteraction) {
-        await this.bot.respondToInteraction(ev, {
-            type: 4,
-            data: this.getPlayerDeadInvalidMessage()
-        }, "player-dead");
+    private async sendPlayerDeadInteraction(interaction: CommandInteraction | MessageComponentInteraction) {
+        await interaction.reply(this.getPlayerDeadInvalidMessage()).catch(Failed.toReplyInteraction("player-dead"));
     }
 
-    private async sendPlayerRoleMismatchInteraction(ev: CommandInteraction | MessageComponentInteraction, role: Role) {
-        await this.bot.respondToInteraction(ev, {
-            type: 4,
-            data: this.getRoleMismatchMessage(role)
-        }, "not-target-role");
+    private async sendPlayerRoleMismatchInteraction(interaction: CommandInteraction | MessageComponentInteraction, role: Role) {
+        await interaction.reply(this.getRoleMismatchMessage(role)).catch(Failed.toReplyInteraction("role-mismatch"));
     }
 
     private async handleLobbyInteraction(interaction: MessageComponentInteraction) {
@@ -880,10 +868,10 @@ export class Werewolves {
         const member = await guild.members.fetch(userId);
 
         var sendEphemeralEmbed = (desc: string) => {
-            this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed(desc, true)
-            }, "lobby-ephemeral");
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(desc),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("lobby-ephemeral"));
         }
 
         switch(interaction.customId) {
@@ -920,9 +908,8 @@ export class Werewolves {
                 return;
         }
 
-        this.bot.respondToInteraction(interaction, {type: 7,
-            data: this.getLobbyMessage()
-        }, "lobby");
+        interaction.update(this.getLobbyMessage())
+            .catch(Failed.toReplyInteraction("lobby"));
 
         if(this.interaction != null) {
             if(interaction.message instanceof Message) {
@@ -935,29 +922,29 @@ export class Werewolves {
         }
     }
     
-    private async handleVoteInteraction(ev: MessageComponentInteraction) {
-        if(!ev.isSelectMenu()) return;
-        if(ev.customId != "vote") {
+    private async handleVoteInteraction(interaction: MessageComponentInteraction) {
+        if(!interaction.isSelectMenu()) return;
+        if(interaction.customId != "vote") {
             return;
         }
 
-        const player = this.getPlayerFromInteraction(ev);
+        const player = this.getPlayerFromInteraction(interaction);
         if(!player) {
-            this.bot.respondToInteraction(ev, {
-                type: 4,
-                data: this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。", true)
-            }, "vote-ephemeral");
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。"),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("vote-ephemeral"));
             return;
         }
         if(!player?.alive) {
-            this.bot.respondToInteraction(ev, {
-                type: 4,
-                data: this.getPlayerDeadInvalidMessage()
-            }, "vote-dead");
+            interaction.reply({
+                ...this.getPlayerDeadInvalidMessage(),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("vote-dead"));
             return;
         }
 
-        const opt: string = ev.values[0];
+        const opt: string = interaction.values[0];
         if(!opt.startsWith("vote_")) {
             Logger.warn("Not started with vote_, but get " + opt);
             return;
@@ -966,11 +953,11 @@ export class Werewolves {
         const n = parseInt(opt.substring(5));
         player.choice = player.alive ? n : -1;
         this.refreshVotes();
-
-        await this.bot.respondToInteraction(ev, {
-            type: 7,
-            data: this.getVoteMessage()
-        }, "vote-result");
+        
+        interaction.reply({
+            ...this.getVoteMessage(),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("vote-result"));
     }
 
     private getRoleMismatchMessage(role: Role) {
@@ -1556,10 +1543,7 @@ export class Werewolves {
             if(!interaction.guildId) return;
 
             Logger.log("Send ready message by interaction respond");
-            await this.bot.respondToInteraction(interaction, {
-                type: 4,
-                data: this.getLobbyMessage()
-            }, "lobby-cmd-interaction");
+            await interaction.reply(this.getLobbyMessage()).catch(Failed.toReplyInteraction("lobby-cmd-interaction"));
 
             this.lobbyMessage = null;
             this.interaction = interaction;
@@ -1574,10 +1558,10 @@ export class Werewolves {
         }
     }
 
-    public async startGame(ev: MessageComponentInteraction) {
+    public async startGame(interaction: MessageComponentInteraction) {
         this.inProgress = true;
         this.startTime = new Date();
-        const msgId = ev.message.id;
+        const msgId = interaction.message.id;
 
         this.assignRoles();
 
@@ -1601,44 +1585,41 @@ export class Werewolves {
             });
         });
 
-        this.bot.respondToInteraction(ev, {
-            type: 7,
-            data: {
-                components: [
-                    {
-                        type: 1,
-                        components: [
-                            {
-                                type: 2,
-                                customId: "game_join",
-                                style: 2,
-                                label: "加入",
-                                disabled: true
-                            },
-                            {
-                                type: 2,
-                                customId: "game_leave",
-                                style: 2,
-                                label: "離開",
-                                disabled: true
-                            },
-                            {
-                                type: 2,
-                                customId: "game_start",
-                                style: 2,
-                                label: "遊戲進行中",
-                                disabled: true
-                            }
-                        ]
-                    }
-                ]
-            }
-        }, "lobby-patch-playing");
+        interaction.update({
+            components: [
+                {
+                    type: 1,
+                    components: [
+                        {
+                            type: 2,
+                            customId: "game_join",
+                            style: 2,
+                            label: "加入",
+                            disabled: true
+                        },
+                        {
+                            type: 2,
+                            customId: "game_leave",
+                            style: 2,
+                            label: "離開",
+                            disabled: true
+                        },
+                        {
+                            type: 2,
+                            customId: "game_start",
+                            style: 2,
+                            label: "遊戲進行中",
+                            disabled: true
+                        }
+                    ]
+                }
+            ]
+        }).catch(Failed.toReplyInteraction("lobby-patch-playing"));
 
         // Create a thread from the lobby message
         try {
-            if(ev.message instanceof Message) {
-                const r = await ev.message.startThread({
+            if(interaction.message instanceof Message) {
+                const r = await interaction.message.startThread({
                     name: "狼人殺遊戲",
                     autoArchiveDuration: 60,
                     reason: "建立狼人殺機器人的遊戲環境"

@@ -14,6 +14,7 @@ import { EventEmitter } from 'stream';
 import { blacklist } from "./static/blacklist.json";
 import { Markdown } from './utils/links';
 import { PromiseUtil } from './utils/promise';
+import { Failed } from './utils/errors';
 
 type LegacyInteractionResponse = {
     type: number,
@@ -96,10 +97,10 @@ export class WerewolvesBot extends EventEmitter {
             if(!interaction.member) return;
 
             if(running) {
-                await this.respondToInteraction(interaction, {
-                    type: 4,
-                    data: this.getCompactedMessageWithEmbed("正在進行其他指令，無法使用。", true)
-                }, "cmd-other-running");
+                await interaction.reply({
+                    ...this.getCompactedMessageWithEmbed("正在進行其他指令，無法使用。"),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("cmd-other-running"));
                 return;
             }
 
@@ -142,15 +143,12 @@ export class WerewolvesBot extends EventEmitter {
                         }
 
                         const msg = `目前 \`${key}\` 的值為: \`${util.inspect(result)}\`` + (action != "get" ? "\n該設定會在下回合生效。" : "");
-                        await this.respondToInteraction(interaction, {
-                            type: 4,
-                            data: this.getCompactedMessageWithEmbed(msg)
-                        }, "cmd-settings-result");
+                        await interaction.reply(this.getCompactedMessageWithEmbed(msg)).catch(Failed.toReplyInteraction("cmd-settings-result"));
                     } catch(ex) {
-                        await this.respondToInteraction(interaction, {
-                            type: 4,
-                            data: this.getCompactedMessageWithEmbed("設定該選項的值的時候發生錯誤。", true)
-                        }, "cmd-settings-error");
+                        await interaction.reply({
+                            ...this.getCompactedMessageWithEmbed("設定該選項的值的時候發生錯誤。"),
+                            ephemeral: true
+                        }).catch(Failed.toReplyInteraction("cmd-settings-result"));
                     }
                     return;
                 }
@@ -165,38 +163,35 @@ export class WerewolvesBot extends EventEmitter {
                 }
 
                 if(sub == "credit") {
-                    await this.respondToInteraction(interaction, {
-                        type: 4,
-                        data: {
-                            embeds: [
-                                {
-                                    ...this.getEmbedBase(),
-                                    ...this.getCreditFooterEmbed(),
-                                    fields: [
-                                        {
-                                            name: "開發人員",
-                                            value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>",
-                                            inline: true
-                                        },
-                                        {
-                                            name: "Icon設計",
-                                            value: Markdown.links.twitter("ItsArcal139"),
-                                            inline: true
-                                        }
-                                    ]
-                                }
-                            ]
-                        }
-                    }, "cmd-credit");
+                    await interaction.reply({
+                        embeds: [
+                            {
+                                ...this.getEmbedBase(),
+                                ...this.getCreditFooterEmbed(),
+                                fields: [
+                                    {
+                                        name: "開發人員",
+                                        value: "阿咔咔#7799\n<@217238973246865408>\n\n꧁༺燄༒影༻꧂#2198\n<@475927616780500992>",
+                                        inline: true
+                                    },
+                                    {
+                                        name: "Icon設計",
+                                        value: Markdown.links.twitter("ItsArcal139"),
+                                        inline: true
+                                    }
+                                ]
+                            }
+                        ]
+                    }).catch(Failed.toReplyInteraction("cmd-credit"));
                     return;
                 }
 
                 if(sub == "stop-the-game-for-sure-plz") {
                     var sendEmbed = async (message: string) => {
-                        await this.respondToInteraction(interaction, {
-                            type: 4,
-                            data: this.getCompactedMessageWithEmbed(message, true)
-                        }, "cmd-force-stop-result");
+                        await interaction.reply({
+                            ...this.getCompactedMessageWithEmbed(message),
+                            ephemeral: true
+                        }).catch(Failed.toReplyInteraction("cmd-force-stop-result"));
                     };
 
                     const game = this.games.find(g => g.guildId == interaction.guildId);
@@ -243,43 +238,6 @@ export class WerewolvesBot extends EventEmitter {
             ]
         };
     }
-    
-    /** @deprecated */
-    public async respondToInteraction(interaction: RespondableInteraction, data: LegacyInteractionResponse, name = "general-respond-interaction") {
-        let prom = PromiseUtil.noop();
-        switch(data.type) {
-            case 4:
-                prom = interaction.reply({
-                    ...data.data,
-                    ephemeral: data.data.flags == 64
-                });
-                break;
-            case 7:
-                if(!interaction.isMessageComponent()) return;
-                prom = interaction.update(data.data).then();
-                break;
-        }
-        return await prom.catch(this.failedToSendMessage(name));
-    }
-
-    /** @deprecated */
-    public async sendMessage(channelId: string, data: any, name = "general-msg-post") {
-        return await this.rest.channels(channelId).messages.post({
-            data
-        }).catch(this.failedToSendMessage(name));
-    }
-
-    /** @deprecated */
-    public async editMessage(channelId: string, messageId: string, data: any, name = "general-msg-patch") {
-        return await this.rest.channels(channelId).messages(messageId).patch({
-            data
-        }).catch(this.failedToEditMessage(name));
-    }
-
-    /** @deprecated */
-    public async deleteMessage(channelId: string, messageId: string, name = "general-delete-msg") {
-        return await this.rest.channels(channelId).messages(messageId).delete().catch(this.failedToDeleteMessage(name));
-    }
 
     public async spawnLobby(guildId: string, interaction: CommandInteraction | null = null) {
         let game = this.games.find(g => g.guildId == guildId);
@@ -293,10 +251,8 @@ export class WerewolvesBot extends EventEmitter {
 
         if(game.inProgress) {
             if(interaction) {
-                await this.respondToInteraction(interaction, {
-                    type: 4,
-                    data: this.getCompactedMessageWithEmbed("遊戲正在進行中，無法使用。")
-                }, "cmd-game-in-progress");
+                await interaction.reply(this.getCompactedMessageWithEmbed("遊戲正在進行中，無法使用。"))
+                    .catch(Failed.toReplyInteraction("cmd-game-in-progress"));
             }
         } else {
             await game.cleanGameMessages();
@@ -522,12 +478,12 @@ export class WerewolvesBot extends EventEmitter {
         this.config.load();
     }
 
-    public getEmbedBase(): any {
+    public getEmbedBase(): MessageEmbedOptions {
         return {
             color: WerewolvesBot.themeColor,
             author: {
                 name: this.api.user?.username, // + " " + WerewolvesBot.version,
-                icon_url: this.api.user?.avatarURL()
+                icon_url: this.api.user?.avatarURL() ?? undefined
             }
         };
     }
