@@ -13,6 +13,7 @@ export class Player extends EventEmitter {
 
     public couple: Player | null = null;
     public isSheriff = false;
+    public isThief = false;
 
     constructor(number: number, member: GuildMember) {
         super();

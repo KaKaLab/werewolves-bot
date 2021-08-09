@@ -1,7 +1,7 @@
 import {
     CommandInteraction, Interaction, MessageComponentInteraction,
     Message, MessageActionRowOptions,
-    TextChannel, ThreadChannel
+    TextChannel, ThreadChannel, InteractionReplyOptions
 } from "discord.js";
 import { WerewolvesBot } from "../bot";
 import { BotGuildConfig } from "../guildConfig";
@@ -16,6 +16,7 @@ import { Failed } from "../utils/errors";
 export enum GameState {
     READY,
     STARTED,
+    THIEF,
     WEREWOLVES,
     SEER,
     WITCH,
@@ -70,6 +71,8 @@ export class Werewolves {
 
     private isVoting = false;
     private endReason: GameEndReason = GameEndReason.CUSTOM;
+
+    private rolesPool: Role[] = [];
 
     public get isBeta() {
         return this.config.isBetaEnabled();
@@ -133,11 +136,6 @@ export class Werewolves {
         });
     }
 
-    private get rest(): any {
-        // @ts-ignore
-        return this.bot.api.api;
-    }
-
     public isMemberInGame(id: string) {
         return !!this.players.find(p => p.member.id == id);
     }
@@ -190,7 +188,7 @@ export class Werewolves {
         });
     }
 
-    private getPlayerDeadInvalidMessage() {
+    private getPlayerDeadInvalidMessage(): InteractionReplyOptions {
         return {
             embeds: [
                 {
@@ -198,7 +196,7 @@ export class Werewolves {
                     description: "你已經死亡，無法執行該操作。"
                 }
             ],
-            flags: 64
+            ephemeral: true
         };
     }
 
@@ -288,6 +286,9 @@ export class Werewolves {
         while(!ended) {
             this.daysCount++;
 
+            await this.turnOfThief();
+            if(this.cancelled) return;
+
             await this.turnOfWerewolves();
             if(this.cancelled) return;
 
@@ -356,11 +357,74 @@ export class Werewolves {
         await this.stopGame(gameMsg);
     }
 
+    private setGameState(state: GameState) {
+        this.state = state;
+        Logger.log(`state (${this.guildId}) -> ${GameState[state].toLowerCase()}`);
+    }
+
+    private async turnOfThief() {
+        this.setGameState(GameState.THIEF);
+
+        const thief = this.players.find(p => p.role == Role.THIEF);
+        if(!thief) return;
+
+        let cancelled = false;
+        let handler = () => {
+            cancelled = true;
+        };
+        this.interactionStorage.on("cancelled", handler);
+
+        this.threadChannel?.send(this.getThiefMessage()).catch(Failed.toSendMessageIn(this.threadChannel, "thief-action"));
+        while(true) {
+            const interaction = await this.waitNextRoleInteraction(Role.THIEF);
+            if(cancelled || !interaction) {
+                this.interactionStorage.off("cancelled", handler);
+                return;
+            }
+            if(!interaction.customId.startsWith("thief_")) continue;
+            if(!interaction.isButton()) continue;
+
+            const opt = interaction.customId.substring(6);
+            if(opt == "inspect") {
+                const a = this.rolesPool[0];
+                const b = this.rolesPool[1];
+                const aName = Role.getName(a == Role.THIEF ? Role.INNOCENT : a);
+                const bName = Role.getName(b == Role.THIEF ? Role.INNOCENT : b);
+
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`身分1: ${aName}\n身分2: ${bName}`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-skipped"));
+                continue;
+            }
+
+            if(opt == "skip") {
+                thief.role = Role.INNOCENT;
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed("你跳過了本回合，並成為了平民。"),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-skipped"));
+            } else {
+                const index = parseInt(opt);
+                const role = this.rolesPool[index];
+                thief.role = role == Role.THIEF ? Role.INNOCENT : role;
+
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`你成為了${Role.getName(thief.role)}。`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-sel-role"));
+            }
+
+            if(interaction.message instanceof Message) {
+                await interaction.message.delete().catch(Failed.toDeleteMessage("thief-source"));
+            }
+            break;
+        }
+    }
+
     private async turnOfWerewolves() {
         if(this.debugVoteOnly) return;
-
-        this.state = GameState.WEREWOLVES;
-        Logger.log("state (" + this.guildId + ") -> werewolves");
+        this.setGameState(GameState.WEREWOLVES);
 
         let cancelled = false;
         let handler = () => {
@@ -401,8 +465,7 @@ export class Werewolves {
         if(this.debugVoteOnly) return;
         
         if(this.getSeers().find(p => p.alive)) {
-            this.state = GameState.SEER;
-            Logger.log("state (" + this.guildId + ") -> seer");
+            this.setGameState(GameState.SEER);
 
             let cancelled = false;
             let handler = () => {
@@ -454,8 +517,7 @@ export class Werewolves {
         this.witchAction = null;
         if(this.getWitches().find(p => p.alive)) {
             const prefix = this.state == GameState.WEREWOLVES ? "狼人請閉眼，" : "預言家請閉眼，";
-            this.state = GameState.WITCH;
-            Logger.log("state (" + this.guildId + ") -> witch");
+            this.setGameState(GameState.WITCH);
 
             const r: any = await this.threadChannel?.send(this.getWitchMessageA(prefix)).catch(Failed.toSendMessageIn(this.threadChannel, "witch-turn-a"));
             this.witchAMsgId = r.id;
@@ -605,8 +667,7 @@ export class Werewolves {
         if(votedDown?.role == Role.HUNTER) hunter = votedDown;
 
         if(hunter) {
-            this.state = GameState.HUNTER;
-            Logger.log("state (" + this.guildId + ") -> hunter");
+            this.setGameState(GameState.HUNTER);
 
             let cancelled = false;
             let handler = () => {
@@ -653,8 +714,7 @@ export class Werewolves {
     }
 
     private async turnOfDiscuss(quote: string): Promise<boolean> {
-        this.state = GameState.DISCUSS;
-        Logger.log("state (" + this.guildId + ") -> discuss");
+        this.setGameState(GameState.DISCUSS);
 
         this.voteLimit = this.players.length;
         this.votes = [];
@@ -720,8 +780,7 @@ export class Werewolves {
                     }
                     interaction.reply(this.getKnightMessage()).catch(Failed.toReplyInteraction("discuss-knight"));
 
-                    this.state = GameState.KNIGHT;
-                    Logger.log("state (" + this.guildId + ") -> knight");
+                    this.setGameState(GameState.KNIGHT);
                     return true;
             }
         }
@@ -771,8 +830,7 @@ export class Werewolves {
     }
 
     private async turnOfVote(appendEmbeds: any[] = []) {
-        this.state = GameState.VOTE;
-        Logger.log("state (" + this.guildId + ") -> vote");
+        this.setGameState(GameState.VOTE);
 
         const voteTime = this.config.isDebugShortTime() ? 10 : 30;
         this.voteQuote = `請開始投票，${voteTime} 秒後結束投票。`;
@@ -794,7 +852,7 @@ export class Werewolves {
                 this.endOfVote();
             }, voteTime * 1000);
         } catch(ex) {
-            Failed.toSendMessageIn(this.threadChannel!!, "vote-turn")(null);
+            Failed.toSendMessageIn(this.threadChannel!!, "vote-turn")(ex);
         }
     }
 
@@ -960,9 +1018,9 @@ export class Werewolves {
         }).catch(Failed.toReplyInteraction("vote-result"));
     }
 
-    private getRoleMismatchMessage(role: Role) {
+    private getRoleMismatchMessage(role: Role): InteractionReplyOptions {
         return {
-            flags: 64,
+            ephemeral: true,
             embeds: [
                 {
                     ...this.getEmbedBase(),
@@ -991,15 +1049,34 @@ export class Werewolves {
         }
         if(features.hasThief) {
             pushRole(Role.THIEF, 1);
-            pushRole(Role.INNOCENT, 2);
+        }
+        if(roles.length < b) {
+            pushRole(Role.INNOCENT, b - roles.length);
         }
         roles.sort(() => Math.random() - 0.5);
 
         this.players.forEach(player => {
             player.role = roles.shift()!!;
         });
+        this.rolesPool = roles;
 
         // -- Game features
+
+        if(features.hasThief) {
+            this.rolesPool = this.players.map(p => p.role);
+            this.rolesPool.push(Role.INNOCENT, Role.INNOCENT);
+            this.rolesPool.sort(() => Math.random() - 0.5);
+
+            const thief = this.players.find(p => p.role == Role.THIEF);
+            if(thief) {
+                thief.isThief = true;
+
+                const [a, b] = this.rolesPool;
+                if(a == Role.WEREWOLVES || b == Role.WEREWOLVES) {
+                    thief.role = Role.WEREWOLVES;
+                }
+            }
+        }
 
         if(features.hasCouples && b >= threshold.couples) {
             const indices: number[] = [];
@@ -1032,6 +1109,48 @@ export class Werewolves {
             if(p.alive) count++;
         });
         return count;
+    }
+
+    private getThiefMessage() {
+        return {
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: "本場有盜賊，盜賊請先選身分："
+                }
+            ],
+            components: [
+                {
+                    type: 1,
+                    components: [
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "身分1",
+                            custom_id: "thief_0"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "身分2",
+                            custom_id: "thief_1"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "查看",
+                            custom_id: "thief_inspect"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "跳過",
+                            custom_id: "thief_skip"
+                        }
+                    ]
+                }
+            ]
+        };
     }
 
     private getWerewolvesMessage(): any {
@@ -1463,7 +1582,8 @@ export class Werewolves {
     private getEndGameEmbed(): any {
         var players = this.players.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
-            return `${i+1}. ${f}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
+            const wasThief = m.isThief && m.role != Role.THIEF;
+            return `${i+1}. ${f}${wasThief ? "盜賊 :arrow_right: " : ""}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
         }).join("\n");
 
         if(players == "") {
@@ -1567,8 +1687,13 @@ export class Werewolves {
 
         this.players.forEach(p => {
             let suffix = "";
+
             if(p.role == Role.WEREWOLVES) {
                 suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
+                
+                if(p.isThief) {
+                    suffix += "\n你原本是盜賊。因為抽身分的選項中包含狼人，你已自動被轉為狼人。";
+                }
             }
 
             if(!!p.couple) {
@@ -1726,7 +1851,7 @@ export class Werewolves {
         this.threadChannel = null;
         this.players = [];
         this.votes = [];
-        this.state = GameState.READY;
+        this.setGameState(GameState.READY);
     }
 
     // -- Dump --
