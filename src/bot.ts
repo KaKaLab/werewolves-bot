@@ -3,7 +3,7 @@ import {
     ApplicationCommandData,
     Client, CommandInteraction, DMChannel, Guild,
     InteractionReplyOptions,
-    Message, MessageComponentInteraction
+    Message, MessageComponentInteraction, MessageEmbedOptions
 } from 'discord.js';
 import { ApplicationCommandOptionTypes } from 'discord.js/typings/enums';
 import { BotConfig } from './config';
@@ -171,6 +171,7 @@ export class WerewolvesBot extends EventEmitter {
                             embeds: [
                                 {
                                     ...this.getEmbedBase(),
+                                    ...this.getCreditFooterEmbed(),
                                     fields: [
                                         {
                                             name: "開發人員",
@@ -527,13 +528,18 @@ export class WerewolvesBot extends EventEmitter {
             author: {
                 name: this.api.user?.username, // + " " + WerewolvesBot.version,
                 icon_url: this.api.user?.avatarURL()
-            },
+            }
+        };
+    }
+
+    public getCreditFooterEmbed(): MessageEmbedOptions {
+        return {
             footer: {
                 icon_url: "https://pbs.twimg.com/profile_images/1320302625678446592/fDr8uq-m_400x400.jpg",
                 text: "Icon設計: @ItsArcal139"
             }
-        };
-    }
+        }
+    };
 
     public async exit() {
         this.canAcceptConsoleInput = false;

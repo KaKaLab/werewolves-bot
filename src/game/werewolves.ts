@@ -1390,6 +1390,7 @@ export class Werewolves {
 
         return {
             ...this.getEmbedBase(),
+            ...this.bot.getCreditFooterEmbed(),
             fields: [
                 {
                     name: "目前玩家",
