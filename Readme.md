@@ -29,6 +29,7 @@
 > * `beta` 代表 Beta 功能， **Bug 出沒注意。** 預設為 `false`。
 > * `hasCouples` 代表是否啟用「CP」，預設為 `false`。
 > * `hasSheriff` 代表是否啟用「警長」，預設為 `false`。
+> * `hasThief` 代表是否啟用「警長」，預設為 `false`。
 
 * ### `maxPlayers`
 > 遊戲玩家的數量上限。預設為 `12`。
