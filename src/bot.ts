@@ -227,9 +227,8 @@ export class WerewolvesBot extends EventEmitter {
         return result;
     }
 
-    public getCompactedMessageWithEmbed(message: string, ephemeral = false) {
+    public getCompactedMessageWithEmbed(message: string) {
         return {
-            flags: ephemeral ? 64 : 0,
             embeds: [
                 {
                     ...this.getEmbedBase(),
