@@ -1,13 +1,22 @@
-import { Client, Guild, GuildChannel, GuildMember, TextChannel, KInteractionWS } from "discord.js";
+import {
+    CommandInteraction, Interaction, MessageComponentInteraction,
+    Message, MessageActionRowOptions,
+    TextChannel, ThreadChannel, InteractionReplyOptions
+} from "discord.js";
 import { WerewolvesBot } from "../bot";
 import { BotGuildConfig } from "../guildConfig";
+import { AsyncStorage } from "../utils/asyncStorage";
 import { Logger } from "../utils/logger";
+import { PromiseTimer } from "../utils/promise";
+import { Player } from "./player";
 import { Role } from "./roles";
 import { blacklist } from "../static/blacklist.json";
+import { Failed } from "../utils/errors";
 
 export enum GameState {
     READY,
     STARTED,
+    THIEF,
     WEREWOLVES,
     SEER,
     WITCH,
@@ -18,65 +27,60 @@ export enum GameState {
     ENDED
 }
 
-type PlayableChannel = TextChannel;
-
-export class WPlayer {
-    public member: GuildMember;
-    public number: number;
-    public alive: boolean = true; 
-    public role: Role = Role.INNOCENT;
-
-    public choice: number = -1;
-    public votes: number = 0;
-
-    constructor(number: number, member: GuildMember) {
-        this.number = number;
-        this.member = member;
-    }
-
-    public kill() {
-        this.alive = false;
-    }
-
-    public toString() {
-        return `Player #${this.number}, alive=${this.alive}, role=${this.role}`;
-    }
+export enum GameEndReason {
+    COUPLE_WIN, WOLF_WIN, GREAT_WIN, CUSTOM
 }
 
+type PlayableChannel = TextChannel;
+
+type WitchActions = {
+    kill: "投毒",
+    save: "解藥"
+};
+
 export class Werewolves {
-    public players: WPlayer[] = []
-    private votes: WPlayer[] = []
+    public players: Player[] = []
+    private votes: Player[] = []
     public state: GameState = GameState.READY;
     private bot: WerewolvesBot;
 
     public guildId: string;
     public config: BotGuildConfig;
-
     public gameChannel: PlayableChannel | null = null;
 
-    private threadChannel: string | null = null;
-    private appId: string | null = null;
-    private interactionToken: string | null = null;
-    
+    private threadChannel: ThreadChannel | null = null;
+    private lobbyMessage: Message | null = null;
+    private interaction: Interaction | null = null;
     private hasThread = false;
 
     private wolvesKilled = -1;
     private witchTarget = -1;
-    private votedDown = -1;
-    private witchAction: string | null = null;
+    private witchAction: keyof WitchActions | null = null;
     private voteLimit = -1;
 
     private voteQuote = "";
-    private voteMsgId = null;
-
-    private hunterNext = () => {};
+    private voteMsgId: string | null = null;
 
     private currentTimeout: NodeJS.Timeout | null = null;
 
     private daysCount = -1;
 
+    private cancelled = false;
     public inProgress = false;
     public startTime = new Date();
+
+    private isVoting = false;
+    private endReason: GameEndReason = GameEndReason.CUSTOM;
+
+    private rolesPool: Role[] = [];
+
+    public get isBeta() {
+        return this.config.isBetaEnabled();
+    }
+
+    private get debugVoteOnly() {
+        return this.config.isDebugVoteOnly();
+    }
 
     private witchRemainSkills = {
         kill: 1,
@@ -84,6 +88,8 @@ export class Werewolves {
     };
 
     private witchAMsgId: string | null = null;
+
+    private interactionStorage: AsyncStorage<MessageComponentInteraction> = new AsyncStorage();
 
     constructor(bot: WerewolvesBot, guild: string) {
         this.bot = bot;
@@ -95,189 +101,78 @@ export class Werewolves {
         this.config.load();
     }
 
-    public isMemberInGame(id: string) {
-        return !!this.players.find(p => p.member.id == id);
-    }
-
     /**
      * Setups event listeners to handle interactions sent from Discord.
      */
     public async init() {
-        this.bot.api.on("interactionCreate", async (ev) => {
-            if(this.bot.isBlacklisted(ev.member.user.id)) {
-                const data = blacklist.find(item => item.id == ev.member.user.id)!!.reason;
+        this.bot.api.on("interactionCreate", async (interaction) => {
+            if(!interaction.isMessageComponent()) return;
+            if(!interaction.member) return;
+            if(interaction.guildId != this.guildId) return;
+            if(this.bot.isBlacklisted(interaction.member.user.id)) {
+                const data = blacklist.find(item => item.id == interaction.member!!.user.id)!!.reason;
                 const buff = Buffer.from(data, "base64");
                 const text = buff.toString("utf-8");
-
-                this.bot.respondToInteraction(ev, {
-                    type: 4,
-                    data: this.bot.getCompactedMessageWithEmbed(text, true)
-                }, "banned");
+                
+                interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(text),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("banned"));
                 return;
             }
-            if(ev.guild_id != this.guildId) return;
-            if(ev.type != 3) return;
 
-            Logger.log(`Interaction issuer: ${ev.member.user.username}#${ev.member.user.discriminator} (in guild ${ev.guild_id})`);
+            if(this.isVoting) {
+                await this.handleVoteInteraction(interaction);
+            }
+            this.interactionStorage.store(interaction);
+
+            Logger.log(`Interaction issuer: ${interaction.member.user.username}#${interaction.member.user.discriminator} (in guild ${interaction.guildId})`);
 
             if(this.state == GameState.READY) {
                 Logger.log(`interaction (${this.guildId}) -> state: ready`);
-                await this.handleLobbyInteraction(ev);
+                await this.handleLobbyInteraction(interaction);
                 return;
             }
-
-            if(this.state == GameState.WEREWOLVES) {
-                Logger.log(`interaction (${this.guildId}) -> state: werewolves`);
-                await this.handleWerewolvesInteraction(ev);
-                return;
-            }
-
-            if(this.state == GameState.SEER) {
-                Logger.log(`interaction (${this.guildId}) -> state: seer`);
-                await this.handleSeerInteraction(ev);
-                return;
-            }
-
-            if(this.state == GameState.WITCH) {
-                if(ev.message.id == this.witchAMsgId) {
-                    Logger.log(`interaction (${this.guildId}) -> state: witchA`);
-                    await this.handleWitchInteractionA(ev);
-                } else {
-                    Logger.log(`interaction (${this.guildId}) -> state: witchB`);
-                    await this.handleWitchInteractionB(ev);
-                }
-                return;
-            }
-
-            if(this.state == GameState.DISCUSS) {
-                Logger.log(`interaction (${this.guildId}) -> state: discuss`);
-                await this.handleDiscussInteraction(ev);
-                return;
-            }
-
-            if(this.state == GameState.KNIGHT) {
-                Logger.log(`interaction (${this.guildId}) -> state: knight`);
-                await this.handleKnightInteraction(ev);
-                return;
-            }
-
-            if(this.state == GameState.HUNTER) {
-                Logger.log(`interaction (${this.guildId}) -> state: hunter`);
-                await this.handleHunterInteraction(ev);
-                return;
-            }
-
-            if(this.state == GameState.VOTE) {
-                Logger.log(`interaction (${this.guildId}) -> state: vote`);
-                await this.handleVoteInteraction(ev);
-                return;
-            }
-
-            Logger.warn("unhandled, state == " + this.state);
         });
     }
 
-    private async handleLobbyInteraction(ev: KInteractionWS) {
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        var sendEphemeralEmbed = (desc: string) => {
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        flags: 64,
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: desc
-                            }
-                        ]
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("lobby-ephemeral"));
-        }
-
-        switch(ev.data.custom_id) {
-            case "game_join":
-                if(this.players.length >= this.config.getMaxPlayers()) {
-                    sendEphemeralEmbed("人數已滿，無法再加入。");
-                    return;
-                }
-
-                if(!this.players.find(m => m.member.id == userId)) {
-                    const p = new WPlayer(this.players.length + 1, member);
-                    this.players.push(p);
-                }
-                break;
-            case "game_leave":
-                if(!this.players.find(p => p.member.id == userId)) {
-                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
-                    return;
-                }
-
-                const index = this.players.findIndex(m => m.member.id == userId);
-                if(index != -1) {
-                    this.players.splice(index, 1);
-                }
-                break;
-            case "game_start":
-                if(!this.players.find(p => p.member.id == userId)) {
-                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
-                    return;
-                }
-                if(this.inProgress) return;
-
-                this.startGame(ev);  
-                return;
-        }
-
-        // @ts-ignore
-        const api: any = this.bot.api.api;
-        api.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 7,
-                data: this.getLobbyMessage()
-            }
-        }).catch(this.bot.failedToSendMessage("lobby"));
-
-        if(!!this.appId) {
-            this.threadChannel = ev.message.id;
-            this.appId = null;
-            this.interactionToken = null;
-        }
+    public isMemberInGame(id: string) {
+        return !!this.players.find(p => p.member.id == id);
     }
 
-    public getWerewolves(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getWerewolves(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.WEREWOLVES;
         });
     }
 
-    public getSeers(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getSeers(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.SEER;
         });
     }
 
-    public getWitches(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getWitches(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.WITCH;
         });
     }
 
-    public getKnights(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getKnights(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.KNIGHT;
         });
     }
 
-    public getHunters(): WPlayer[] {
-        return this.players.filter((p: WPlayer) => {
+    public getHunters(): Player[] {
+        return this.players.filter((p: Player) => {
             return p.role == Role.HUNTER;
+        });
+    }
+
+    public getCouples(): Player[] {
+        return this.players.filter((p: Player) => {
+            return !!p.couple;
         });
     }
 
@@ -288,12 +183,12 @@ export class Werewolves {
 
         this.players.forEach(v => {
             if(v.choice >= 0) {
-                this.votes[v.choice].votes++;
+                this.votes[v.choice].votes += (v.isSheriff ? 2 : 1);
             }
         });
     }
 
-    private getPlayerDeadInvalidMessage() {
+    private getPlayerDeadInvalidMessage(): InteractionReplyOptions {
         return {
             embeds: [
                 {
@@ -301,658 +196,442 @@ export class Werewolves {
                     description: "你已經死亡，無法執行該操作。"
                 }
             ],
-            flags: 64
+            ephemeral: true
         };
     }
 
-    private async handleWerewolvesInteraction(ev: KInteractionWS) {
-        if(ev.data.custom_id != "werewolves_kill") return;
+    public getPlayerFromInteraction(interaction: Interaction) {
+        const userId = interaction.user.id;
+        if(!this.isMemberInGame(userId)) return null;
 
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-
-        const player = this.getWerewolves().find(p => {
+        return this.players.find(p => {
             return p.member.id == userId
         });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.WEREWOLVES)
-                }
-            }).catch(this.bot.failedToSendMessage("not-werewolves"));
-            return;
-        }
-        if(!player.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("werewolves-dead"));
-            return;
-        }
-        
-        const opt: string = ev.data.values[0];
-        if(!opt.startsWith("player_")) {
-            return;
-        }
-
-        this.wolvesKilled = parseInt(opt.substring(7));
-        const killed = this.players.find(p => p.number == this.wolvesKilled);
-
-        await rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 4,
-                data: {
-                    flags: 64,
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `你殺掉了 <@${killed!!.member.id}>。`
-                        }
-                    ]
-                }
-            }
-        }).catch(this.bot.failedToSendMessage("werewolves-killed"));
-
-        // @ts-ignore
-        rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("werewolves-source"));
-
-        await this.turnOfSeer();    
     }
 
-    private async handleSeerInteraction(ev: KInteractionWS) {
-        if(ev.data.custom_id != "seer_inspect") {
-            Logger.warn("Not seer_inspect, but get " + ev.data.custom_id);
-            return;
-        }
-
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-
-        const player = this.getSeers().find(p => {
-            return p.member.id == userId
-        });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.SEER)
-                }
-            }).catch(this.bot.failedToSendMessage("not-seer"));
-            return;
-        }
-        if(!player.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("seer-dead"));
-            return;
-        }
-        
-        const opt: string = ev.data.values[0];
-        if(!opt.startsWith("player_")) {
-            Logger.warn("Not started with player_, but get " + opt);
-            return;
-        }
-
-        const n = parseInt(opt.substring(7));
-        const p = this.players.find(p => p.number == n)!!;
-        const isWolf = p.role == Role.WEREWOLVES;
-
-        await rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 4,
-                data: {
-                    flags: 64,
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`
-                        }
-                    ]
+    private async waitNextPlayerInteraction(aliveOnly = true) {
+        const val = await this.interactionStorage.waitNextConditionMeet(ev => {
+            if(!ev) return false;
+            const player = this.getPlayerFromInteraction(ev);
+            if(!player) return false;
+            return (aliveOnly ? player.alive : true);
+        }, async ev => {
+            if(ev) {
+                const player = this.getPlayerFromInteraction(ev);
+                if(player) {
+                    if(!player.alive) {
+                        await this.sendPlayerDeadInteraction(ev);
+                        return;
+                    }
+                } else {
+                    await this.sendMemberNotPlayerInteraction(ev);
                 }
             }
-        }).catch(this.bot.failedToSendMessage("seer-inspected"));
-
-        // @ts-ignore
-        rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("seer-source"));
-
-        this.turnOfWitchA();    
+        });
+        return val!!;
     }
 
-    private async handleWitchInteractionA(ev: KInteractionWS) {
-        if(!ev.data.custom_id.startsWith("witch_")) return;
-
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-
-        const player = this.getWitches().find(p => {
-            return p.member.id == userId
+    private async waitNextRoleInteraction(role: Role, aliveOnly = true) {
+        const val = await this.interactionStorage.waitNextConditionMeet(ev => {
+            if(!ev) return false;
+            const player = this.getPlayerFromInteraction(ev);
+            if(!player) return false;
+            return player.role == role && (aliveOnly ? player.alive : true);
+        }, async ev => {
+            if(ev) {
+                const player = this.getPlayerFromInteraction(ev);
+                if(player) {
+                    if(player.role != role) {
+                        await this.sendPlayerRoleMismatchInteraction(ev, role);
+                    } else if(!player.alive) {
+                        await this.sendPlayerDeadInteraction(ev);
+                        return;
+                    }
+                } else {
+                    await this.sendMemberNotPlayerInteraction(ev);
+                }
+            }
         });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.WITCH)
-                }
-            }).catch(this.bot.failedToSendMessage("not-witch"));
-            return;
-        }
-        if(!player.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("witch-dead"));
-            return;
+        return val!!;
+    }
+
+    public isGameEnded() {
+        if(this.debugVoteOnly) return false;
+
+        const b = this.players.filter(p => p.alive).length;
+        const w = this.getWerewolves().filter(p => p.alive).length;
+        const c = this.getCouples().filter(p => p.alive).length;
+
+        if(c > 0 && b <= 3) {
+            this.endReason = GameEndReason.COUPLE_WIN;
+            return true;
         }
 
-        const key = ev.data.custom_id.substring(6);
-        if(key == "inspect") {
-            const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: `本回合狼人殺了 <@${wolvesKilled?.member.id}>。`
-                            }
-                        ],
-                        flags: 64
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("witch-inspect-killer"));
-
-            return;
-        }
-        else if(key == "skip") {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: "你選擇跳過本回合。"
-                            }
-                        ],
-                        flags: 64
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("witch-skip"));
-
-            // @ts-ignore
-            rest = this.bot.api.api;
-            await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete().catch(this.bot.failedToDeleteMessage("witch-source"));
-
-            this.turnOfDaylight("女巫請閉眼。");
+        if(w == 0) {
+            this.endReason = GameEndReason.GREAT_WIN;
+            return true;
+        } else if(b - w <= 1) {
+            this.endReason = GameEndReason.WOLF_WIN;
+            return true;
         } else {
-            // @ts-ignore
-            const remains: number = this.witchRemainSkills[key];
-            if(remains <= 0) {
-                rest.interactions(ev.id, ev.token).callback.post({
-                    data: {
-                        type: 4,
-                        data: {
-                            flags: 64,
-                            embeds: [
-                                {
-                                    ...this.getEmbedBase(),
-                                    description: (key == "kill" ? "毒藥" : "解藥") + "已用完。"
-                                }
-                            ]
-                        }
-                    }
-                }).catch(this.bot.failedToSendMessage("witch-skill-exhaust"));
+            return false;
+        }
+    }
+
+    private async runGameLoop() {
+        let ended = this.isGameEnded();
+        this.daysCount = -1;
+        this.cancelled = false;
+
+        while(!ended) {
+            this.daysCount++;
+
+            await this.turnOfThief();
+            if(this.cancelled) return;
+
+            await this.turnOfWerewolves();
+            if(this.cancelled) return;
+
+            await this.turnOfSeer();
+            if(this.cancelled) return;
+
+            const daylightPrefix = await this.turnOfWitch();
+            if(this.cancelled) return;
+
+            const quote = await this.turnOfDaylight(daylightPrefix);
+            if(this.cancelled) return;
+
+            if(this.daysCount == 1) {
+                const sheriff = this.players.find(p => p.isSheriff);
+                if(sheriff) {
+                    await this.threadChannel?.send(this.bot.getCompactedMessageWithEmbed(`<@${sheriff.member.id}> 是警長。`));
+                    if(this.cancelled) return;
+                }
+            }
+
+            await this.turnOfHunter(quote);
+            if(this.cancelled) return;
+
+            if(this.isGameEnded()) break;
+
+            const hasKnight = await this.turnOfDiscuss(quote);
+            if(this.cancelled) return;
+
+            if(hasKnight) {
+                await this.turnOfKnight();
+                if(this.cancelled) return;
+
+                continue;
+            } else {
+                this.isVoting = true;
+                await this.turnOfVote();
+                if(this.cancelled) return;
+
+                await PromiseTimer.waitUntil(() => {
+                    if(this.cancelled) return true;
+                    return this.isVoting == false;
+                });
+                if(this.cancelled) return;
+
+                await this.turnOfHunter(quote);
+                if(this.cancelled) return;
+
+                if(this.isGameEnded()) break;
+            }
+        }
+
+        let gameMsg = "遊戲結束。";
+        switch(this.endReason) {
+            case GameEndReason.COUPLE_WIN:
+                gameMsg = "特殊結局，CP 勝利。";
+                break;
+            case GameEndReason.GREAT_WIN:
+                gameMsg = "遊戲結束，好人勝利。";
+                break;
+            case GameEndReason.WOLF_WIN:
+                gameMsg = "遊戲結束，狼人勝利。";
+                break;
+        }
+
+        if(this.cancelled) return;
+        await this.stopGame(gameMsg);
+    }
+
+    private setGameState(state: GameState) {
+        this.state = state;
+        Logger.log(`state (${this.guildId}) -> ${GameState[state].toLowerCase()}`);
+    }
+
+    private async turnOfThief() {
+        this.setGameState(GameState.THIEF);
+
+        const thief = this.players.find(p => p.role == Role.THIEF);
+        if(!thief) return;
+
+        let cancelled = false;
+        let handler = () => {
+            cancelled = true;
+        };
+        this.interactionStorage.on("cancelled", handler);
+
+        this.threadChannel?.send(this.getThiefMessage()).catch(Failed.toSendMessageIn(this.threadChannel, "thief-action"));
+        while(true) {
+            const interaction = await this.waitNextRoleInteraction(Role.THIEF);
+            if(cancelled || !interaction) {
+                this.interactionStorage.off("cancelled", handler);
                 return;
             }
+            if(!interaction.customId.startsWith("thief_")) continue;
+            if(!interaction.isButton()) continue;
 
-            // @ts-ignore
-            this.witchRemainSkills[key]--;
+            const opt = interaction.customId.substring(6);
+            if(opt == "inspect") {
+                const a = this.rolesPool[0];
+                const b = this.rolesPool[1];
+                const aName = Role.getName(a == Role.THIEF ? Role.INNOCENT : a);
+                const bName = Role.getName(b == Role.THIEF ? Role.INNOCENT : b);
 
-            // @ts-ignore
-            const type: "投毒" | "解藥" = {
-                kill: "投毒",
-                save: "解藥"
-            }[key];
-            this.witchAction = key;
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`身分1: ${aName}\n身分2: ${bName}`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-skipped"));
+                continue;
+            }
 
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        ...this.getWitchMessageB(type),
-                        flags: 64
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("witchB"));
+            if(opt == "skip") {
+                thief.role = Role.INNOCENT;
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed("你跳過了本回合，並成為了平民。"),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-skipped"));
+            } else {
+                const index = parseInt(opt);
+                const role = this.rolesPool[index];
+                thief.role = role == Role.THIEF ? Role.INNOCENT : role;
+
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`你成為了${Role.getName(thief.role)}。`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("thief-sel-role"));
+            }
+
+            if(interaction.message instanceof Message) {
+                await interaction.message.delete().catch(Failed.toDeleteMessage("thief-source"));
+            }
+            break;
         }
     }
 
-    private async handleWitchInteractionB(ev: KInteractionWS) {
-        if(!ev.data.custom_id.startsWith("witch_")) return;
+    private async turnOfWerewolves() {
+        if(this.debugVoteOnly) return;
+        this.setGameState(GameState.WEREWOLVES);
 
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
+        let cancelled = false;
+        let handler = () => {
+            cancelled = true;
+        };
+        this.interactionStorage.on("cancelled", handler);
 
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
+        this.threadChannel?.send(this.getWerewolvesMessage()).catch(Failed.toSendMessageIn(this.threadChannel, "werewolves-action"));
+        while(true) {
+            const interaction = await this.waitNextRoleInteraction(Role.WEREWOLVES);
+            if(cancelled || !interaction) {
+                this.interactionStorage.off("cancelled", handler);
+                return;
+            }
+            if(interaction.customId != "werewolves_kill") continue;
+            if(!interaction.isSelectMenu()) continue;
 
-        const player = this.getWitches().find(p => {
-            return p.member.id == userId
-        });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.WITCH)
-                }
-            }).catch(this.bot.failedToSendMessage("not-witch"));
-            return;
+            const opt = interaction.values[0];
+            if(!opt.startsWith("player_")) {
+                continue;
+            }
+
+            this.wolvesKilled = parseInt(opt.substring(7));
+            const killed = this.players.find(p => p.number == this.wolvesKilled);
+
+            await interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(`你殺掉了 <@${killed!!.member.id}>。`),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("werewolves-killed"));
+            if(interaction.message instanceof Message) {
+                await interaction.message.delete().catch(Failed.toDeleteMessage("werewolve-source"));
+            }
+            break;
         }
-        if(!player.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("witch-dead"));
-            return;
-        }
+    }
 
-        const opt: string = ev.data.values[0];
+    private async turnOfSeer() {
+        if(this.debugVoteOnly) return;
+        
+        if(this.getSeers().find(p => p.alive)) {
+            this.setGameState(GameState.SEER);
+
+            let cancelled = false;
+            let handler = () => {
+                cancelled = true;
+            };
+            this.interactionStorage.on("cancelled", handler);
+
+            this.threadChannel?.send(this.getSeerMessage()).catch(Failed.toSendMessageIn(this.threadChannel, "seer-turn"));
+            while(true) {
+                const interaction = await this.waitNextRoleInteraction(Role.SEER);
+                if(cancelled || !interaction) {
+                    this.interactionStorage.off("cancelled", handler);
+                    return;
+                }
+    
+                if(interaction.customId != "seer_inspect") {
+                    Logger.warn("Not seer_inspect, but get " + interaction.customId);
+                    continue;
+                }
+                if(!interaction.isSelectMenu()) continue;
+
+                const opt = interaction.values[0];
+                if(!opt.startsWith("player_")) {
+                    Logger.warn("Not started with player_, but get " + opt);
+                    continue;
+                }
+
+                const n = parseInt(opt.substring(7));
+                const p = this.players.find(p => p.number == n)!!;
+                const isWolf = p.role == Role.WEREWOLVES;
+
+                await interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed(`<@${p.member.id}> 是${isWolf ? "狼人" : "好人"}。`),
+                    ephemeral: true
+                }).catch(Failed.toReplyInteraction("seer-inspected"));
+
+                if(interaction.message instanceof Message) {
+                    await interaction.message.delete().catch(Failed.toDeleteMessage("seer-source"));
+                }
+                break; 
+            }
+        }
+    }
+
+    private async turnOfWitch(): Promise<string> {
+        if(this.debugVoteOnly) return "已啟用僅投票模式。";
+        
+        this.witchTarget = -1;
+        this.witchAction = null;
+        if(this.getWitches().find(p => p.alive)) {
+            const prefix = this.state == GameState.WEREWOLVES ? "狼人請閉眼，" : "預言家請閉眼，";
+            this.setGameState(GameState.WITCH);
+
+            const r: any = await this.threadChannel?.send(this.getWitchMessageA(prefix)).catch(Failed.toSendMessageIn(this.threadChannel, "witch-turn-a"));
+            this.witchAMsgId = r.id;
+            Logger.info("WitchA msg id -> " + this.witchAMsgId);
+
+            let cancelled = false;
+            let handler = () => {
+                cancelled = true;
+            };
+            this.interactionStorage.on("cancelled", handler);
+
+            while(true) {
+                let toSkip = false;
+                const interaction = await this.waitNextRoleInteraction(Role.WITCH);
+                if(cancelled || !interaction) {
+                    this.interactionStorage.off("cancelled", handler);
+                    return "";
+                }
+    
+                if(interaction.message.id == this.witchAMsgId) {
+                    Logger.log(`interaction (${this.guildId}) -> state: witchA`);
+                    toSkip = await this.processWitchInteractionA(interaction);
+                } else {
+                    Logger.log(`interaction (${this.guildId}) -> state: witchB`);
+                    toSkip = await this.processWitchInteractionB(interaction);
+                }
+
+                if(toSkip) {
+                    break;
+                } else {
+                    continue;
+                }
+            }
+            return "女巫請閉眼。";
+        } else {
+            return GameState.WEREWOLVES ? "狼人請閉眼。" : "預言家請閉眼。";
+        }
+    }
+
+    private async processWitchInteractionA(interaction: MessageComponentInteraction): Promise<boolean> {
+        if(!interaction.customId.startsWith("witch_")) return false;
+
+        const key = interaction.customId.substring(6);
+        if(key == "inspect") {
+            const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(`本回合狼人殺了 <@${wolvesKilled?.member.id}>。`),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witch-inspect-killer"));
+            return false;
+        }
+        else if(key == "skip") {
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed("你選擇跳過本回合。"),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witch-skip"));
+            await this.threadChannel?.messages.delete(this.witchAMsgId!!).catch(Failed.toDeleteMessage("witch-source"));
+            return true;
+        } else if(key == "kill") {
+            const remains = this.witchRemainSkills[key];
+            if(remains <= 0) {
+                interaction.reply({
+                    ...this.bot.getCompactedMessageWithEmbed((key == "kill" ? "毒藥" : "解藥") + "已用完。"),
+                    ephemeral: true
+                });
+                return false;
+            }
+            this.witchRemainSkills[key]--;
+
+            const type = ({
+                kill: "投毒",
+                save: "解藥"
+            } as WitchActions)[key];
+            this.witchAction = key;
+
+            interaction.reply({
+                ...this.getWitchMessageB(type),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("witchB"));
+            return false;
+        }
+        return false;
+    }
+
+    private async processWitchInteractionB(interaction: MessageComponentInteraction): Promise<boolean> {
+        if(!interaction.customId.startsWith("witch_")) return false;
+        if(!interaction.isSelectMenu()) return false;
+
+        const opt = interaction.values[0];
         if(!opt.startsWith("player_")) {
             Logger.warn("Not started with player_, but get " + opt);
-            return;
+            return false;
         }
 
         const n = parseInt(opt.substring(7));
         const p = this.players.find(p => p.number == n)!!;
         this.witchTarget = p.number;
         
-        // @ts-ignore
-        const type: "投毒" | "解藥" = {
+        const type = {
             kill: "投毒",
             save: "解藥"
         }[this.witchAction!!];
 
-        rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 4,
-                data: {
-                    flags: 64,
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `你選擇對 <@${p.member.id}> ${type}。`
-                        }
-                    ]
-                }
-            }
-        }).catch(this.bot.failedToSendMessage("witch-action"));
-
-        // @ts-ignore
-        rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(this.witchAMsgId).delete().catch(this.bot.failedToDeleteMessage("witch-msg-a"));
-
-        this.turnOfDaylight("女巫請閉眼。");
+        interaction.reply({
+            ...this.bot.getCompactedMessageWithEmbed(`你選擇對 <@${p.member.id}> ${type}。`),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("witch-action"));
+        await this.threadChannel?.messages.delete(this.witchAMsgId!!).catch(Failed.toDeleteMessage("witch-msg-a"));
+        return true;
     }
 
-    private async handleDiscussInteraction(ev: KInteractionWS) {
-        if(!ev.data.custom_id.startsWith("discuss")) {
-            Logger.warn("Not discuss, but get " + ev.data.custom_id);
-            return;
-        }
+    private async turnOfDaylight(prefix: string): Promise<string> {
+        if(this.debugVoteOnly) return "已啟用僅投票模式。";
 
-        const userId = ev.member.user.id;
-        // const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
-        // const member = await guild.members.fetch(userId);
-
-        var sendEphemeralEmbed = (desc: string) => {
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        flags: 64,
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: desc
-                            }
-                        ]
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("discuss-ephemeral"));
-        }
-        const player = this.players.find(p => p.member.id == userId);
-        if(!player) {
-            sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
-            return;
-        }
-        if(!player?.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("discuss-dead"));
-            return;
-        }
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-        const key = ev.data.custom_id.substring(8);
-        
-        switch(key) {
-            case "vote":
-                rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("discuss-source-a"));
-                this.voteLimit = this.players.length;
-                this.votes = [];
-                Array.prototype.push.apply(this.votes, this.players);
-                this.turnOfVote();
-                break;
-            case "knight":
-                const player = this.getKnights().find(p => {
-                    return p.member.id == userId
-                });
-                if(!player) {
-                    rest.interactions(ev.id, ev.token).callback.post({
-                        data: {
-                            type: 4,
-                            data: this.getRoleMismatchMessage(Role.KNIGHT)
-                        }
-                    }).catch(this.bot.failedToSendMessage("discuss-not-knight"));
-                    return;
-                }
-
-                rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("discuss-source-b"));
-                
-                // @ts-ignore
-                rest = this.bot.api.api;
-                rest.interactions(ev.id, ev.token).callback.post({
-                    data: {
-                        type: 4,
-                        data: this.getKnightMessage()
-                    }
-                }).catch(this.bot.failedToSendMessage("discuss-knight"));
-
-                this.state = GameState.KNIGHT;
-                Logger.log("state (" + this.guildId + ") -> knight");
-                return;
-        }
-    }
-
-    private async handleKnightInteraction(ev: KInteractionWS) {
-        if(ev.data.custom_id != "knight_inspect") {
-            Logger.warn("Not knight_inspect, but get " + ev.data.custom_id);
-            return;
-        }
-
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-
-        const player = this.getKnights().find(p => {
-            return p.member.id == userId
-        });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.KNIGHT)
-                }
-            }).catch(this.bot.failedToSendMessage("not-knight"));
-            return;
-        }
-        if(!player.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("knight-dead"));
-            return;
-        }
-        
-        const opt: string = ev.data.values[0];
-        if(!opt.startsWith("player_")) {
-            Logger.warn("Not started with player_, but get " + opt);
-            return;
-        }
-
-        const n = parseInt(opt.substring(7));
-        const p = this.players.find(p => p.number == n)!!;
-        const isWolf = p.role == Role.WEREWOLVES;
-
-        (isWolf ? p : player).kill();
-
-        await rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 4,
-                data: {
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`
-                        }
-                    ]
-                }
-            }
-        }).catch(this.bot.failedToSendMessage("knight-result"));
-
-        // @ts-ignore
-        rest = this.bot.api.api;
-        rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("knight-source"));
-
-        this.turnOfWerewolves();    
-    }
-
-    private async handleHunterInteraction(ev: KInteractionWS) {
-        if(ev.data.custom_id != "hunter_target") return;
-
-        const userId = ev.member.user.id;
-        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
-        const member = await guild.members.fetch(userId);
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-
-        const player = this.getHunters().find(p => {
-            return p.member.id == userId
-        });
-        if(!player) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getRoleMismatchMessage(Role.HUNTER)
-                }
-            }).catch(this.bot.failedToSendMessage("not-hunter"));
-            return;
-        }
-        
-        const opt: string = ev.data.values[0];
-        if(!opt.startsWith("player_")) {
-            return;
-        }
-
-        const hunted = parseInt(opt.substring(7));
-        const killed = this.players.find(p => p.number == hunted);
-        killed?.kill();
-
-        await rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 4,
-                data: {
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `獵人帶走了 <@${killed!!.member.id}>。`
-                        }
-                    ]
-                }
-            }
-        }).catch(this.bot.failedToSendMessage("hunter-killed"));
-
-        // @ts-ignore
-        rest = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages(ev.message.id).delete().catch(this.bot.failedToDeleteMessage("hunter-source"));
-
-        await this.checkEndOrNext(() => {
-            this.hunterNext();
-        });  
-    }
-
-    private async handleVoteInteraction(ev: KInteractionWS) {
-        if(ev.data.custom_id != "vote") {
-            return;
-        }
-
-        const userId = ev.member.user.id;
-        // const guild = this.bot.api.guilds.cache.get(WerewolvesBot.GUILD_ID)!!;
-        // const member = await guild.members.fetch(userId);
-
-        var sendEphemeralEmbed = (desc: string) => {
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: {
-                        flags: 64,
-                        embeds: [
-                            {
-                                ...this.getEmbedBase(),
-                                description: desc
-                            }
-                        ]
-                    }
-                }
-            }).catch(this.bot.failedToSendMessage("vote-ephemeral"));
-        }
-
-        const player = this.players.find(p => p.member.id == userId);
-        if(!player) {
-            sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
-            return;
-        }
-        if(!player?.alive) {
-            rest.interactions(ev.id, ev.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getPlayerDeadInvalidMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("vote-dead"));
-            return;
-        }
-
-        // @ts-ignore
-        var rest: any = this.bot.api.api;
-        const opt: string = ev.data.values[0];
-        if(!opt.startsWith("vote_")) {
-            Logger.warn("Not started with vote_, but get " + opt);
-            return;
-        }
-
-        const n = parseInt(opt.substring(5));
-        const p = this.players.find(p => p.member.id == userId)!!;
-        p.choice = p.alive ? n : -1;
-        this.refreshVotes();
-
-        await rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 7,
-                data: this.getVoteMessage()
-            }
-        }).catch(this.bot.failedToEditMessage("vote-result"));
-    }
-
-    private getRoleMismatchMessage(role: Role) {
-        return {
-            flags: 64,
-            embeds: [
-                {
-                    ...this.getEmbedBase(),
-                    description: `你的身分不是${Role.getName(role)}，無法執行這個操作。`
-                }
-            ]
-        };
-    }
-
-    private async turnOfWerewolves() {
-        this.state = GameState.WEREWOLVES;
-        Logger.log("state (" + this.guildId + ") -> werewolves");
-
-        // @ts-ignore
-        const rest: any = this.bot.api.api;
-        await rest.channels(this.threadChannel!!).messages.post({
-            data: this.getWerewolvesMessage()
-        }).catch(this.bot.failedToSendMessage("werewolves-action"));
-    }
-
-    private async turnOfSeer() {
-        if(this.getSeers().find(p => p.alive)) {
-            this.state = GameState.SEER;
-            Logger.log("state (" + this.guildId + ") -> seer");
-
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.channels(this.threadChannel!!).messages.post({
-                data: this.getSeerMessage()
-            }).catch(this.bot.failedToSendMessage("seer-turn"));
-        } else {
-            this.turnOfWitchA();
-        }
-    }
-
-    private async turnOfWitchA() {
-        this.witchTarget = -1;
-        this.witchAction = null;
-        if(this.getWitches().find(p => p.alive)) {
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            const prefix = this.state == GameState.WEREWOLVES ? "狼人請閉眼，" : "預言家請閉眼，";
-
-            this.state = GameState.WITCH;
-            Logger.log("state (" + this.guildId + ") -> witch");
-
-            const r = await api.channels(this.threadChannel!!).messages.post({
-                data: this.getWitchMessageA(prefix)
-            }).catch(this.bot.failedToSendMessage("witch-turn-a"));
-            this.witchAMsgId = r.id;
-            Logger.info("WitchA msg id -> " + this.witchAMsgId);
-        } else {
-            this.turnOfDaylight(GameState.WEREWOLVES ? "狼人請閉眼。" : "預言家請閉眼。");
-        }
-    }
-
-    private async turnOfDaylight(prefix: string) {
         this.votes = [];
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
         const witchTarget = this.players.find(p => p.number == this.witchTarget);
@@ -970,55 +649,72 @@ export class Werewolves {
         }
 
         this.daysCount++;
-
-        const quote = saved ?
+        return saved ?
             `${prefix}天亮了。昨晚是平安夜。` :
             (this.witchAction == "kill" && this.witchTarget != this.wolvesKilled ?
                 `${prefix}天亮了。昨晚死亡的是 <@${wolvesKilled?.member.id}>、<@${witchTarget?.member.id}>。` :
                 `${prefix}天亮了。昨晚死亡的是 <@${wolvesKilled?.member.id}>。`);
-
-        this.turnOfHunter(quote, () => {
-            this.turnOfDiscuss(quote);
-        });
     }
 
-    private async turnOfHunter(quote: string, next: () => void) {
+    private async turnOfHunter(quote: string): Promise<boolean> {
+        if(this.debugVoteOnly) return false;
+
         const wolvesKilled = this.players.find(p => p.number == this.wolvesKilled);
         const votedDown = this.votes[0];
 
-        let hunter: WPlayer | null = null;
+        let hunter: Player | null = null;
         if(wolvesKilled?.role == Role.HUNTER) hunter = wolvesKilled;
         if(votedDown?.role == Role.HUNTER) hunter = votedDown;
 
         if(hunter) {
-            this.state = GameState.HUNTER;
-            Logger.log("state (" + this.guildId + ") -> hunter");
+            this.setGameState(GameState.HUNTER);
 
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.channels(this.threadChannel!!).messages.post({
-                data: {
-                    embeds: [
-                        {
-                            ...this.getGameEmbed(),
-                            description: quote + `\n<@${hunter.member.id}> 是獵人，請選擇要帶走的對象:`
-                        }
-                    ],
-                    components: this.getHunterComponents()
+            let cancelled = false;
+            let handler = () => {
+                cancelled = true;
+            };
+            this.interactionStorage.on("cancelled", handler);
+
+            this.threadChannel?.send({
+                embeds: [
+                    {
+                        ...this.getGameEmbed(),
+                        description: quote + `\n<@${hunter.member.id}> 是獵人，請選擇要帶走的對象:`
+                    }
+                ],
+                components: this.getHunterComponents()
+            }).catch(Failed.toSendMessageIn(this.threadChannel, "hunter-turn"));
+
+            while(true) {
+                const interaction = await this.waitNextRoleInteraction(Role.HUNTER, false);
+                if(cancelled || !interaction) {
+                    this.interactionStorage.off("cancelled", handler);
+                    return false;
                 }
-            }).catch(this.bot.failedToSendMessage("hunter-turn"));
-            this.hunterNext = next;
-        } else {
-            this.checkEndOrNext(next);
+                if(interaction.customId != "hunter_target") continue;
+                if(!interaction.isSelectMenu()) continue;
+                
+                const opt: string = interaction.values[0];
+                if(!opt.startsWith("player_")) {
+                    continue;
+                }
+
+                const hunted = parseInt(opt.substring(7));
+                const killed = this.players.find(p => p.number == hunted);
+                killed?.kill();
+
+                await interaction.reply(this.bot.getCompactedMessageWithEmbed(`獵人帶走了 <@${killed!!.member.id}>。`))
+                    .catch(Failed.toReplyInteraction("hunter-killed"));
+                await this.threadChannel?.messages.delete(interaction.message.id)
+                    .catch(Failed.toDeleteMessageIn(this.threadChannel, "hunter-source"));
+                break;
+            }
         }
+        return !!hunter;
     }
 
-    private async turnOfDiscuss(quote: string) {
-        this.state = GameState.DISCUSS;
-        Logger.log("state (" + this.guildId + ") -> discuss");
-
-        // @ts-ignore
-        const api: any = this.bot.api.api;
+    private async turnOfDiscuss(quote: string): Promise<boolean> {
+        this.setGameState(GameState.DISCUSS);
 
         this.voteLimit = this.players.length;
         this.votes = [];
@@ -1026,35 +722,115 @@ export class Werewolves {
 
         const discussTime = this.config.isDebugShortTime() ? 15 : 120;
 
-        const r = await api.channels(this.threadChannel!!).messages.post({
-            data: {
-                embeds: [
-                    {
-                        ...this.getGameEmbed(),
-                        description: quote + ((quote && quote.trim() != "") ? "\n" : "") +`請玩家發言，${discussTime} 秒後開放投票。`
-                    }
-                ],
-                components: this.getDiscussComponents()
-            }
-        }).catch(this.bot.failedToSendMessage("discuss-turn"));
+        const r = await this.threadChannel?.send({
+            embeds: [
+                {
+                    ...this.getGameEmbed(),
+                    description: quote + ((quote && quote.trim() != "") ? "\n" : "") +`請玩家發言，${discussTime} 秒後開放投票。`
+                }
+            ],
+            components: this.getDiscussComponents()
+        }).catch(Failed.toSendMessageIn(this.threadChannel, "discuss-turn"));
 
         this.currentTimeout = setTimeout(() => {
-            // @ts-ignore
-            const api: any = this.bot.api.api;
-            api.channels(this.threadChannel!!).messages(r.id).patch({
-                data: {
-                    components: this.getDiscussComponents(true)
-                }
-            }).catch(this.bot.failedToEditMessage("discuss-enable-vote"));
+            r?.edit({
+                components: this.getDiscussComponents(true)
+            }).catch(Failed.toEditMessageIn(r.channel, "discuss-enable-vote"));
         }, discussTime * 1000);
+
+        let cancelled = false;
+        let handler = () => {
+            cancelled = true;
+        };
+        this.interactionStorage.on("cancelled", handler);
+
+        while(true) {
+            const interaction = await this.waitNextPlayerInteraction();
+            if(cancelled || !interaction) {
+                this.interactionStorage.off("cancelled", handler);
+                return true;
+            }
+
+            if(!interaction.customId.startsWith("discuss")) {
+                Logger.warn("Not discuss, but get " + interaction.customId);
+                continue;
+            }
+
+            const key = interaction.customId.substring(8);
+            switch(key) {
+                case "vote":
+                    if(interaction.message instanceof Message) {
+                        interaction.message.delete().catch(Failed.toDeleteMessage("discuss-source-a"));
+                    }
+                    this.voteLimit = this.players.length;
+                    this.votes = [];
+                    Array.prototype.push.apply(this.votes, this.players);
+                    return false;
+                case "knight":
+                    const player = this.getPlayerFromInteraction(interaction);
+                    if(player!!.role != Role.KNIGHT) {
+                        interaction.reply(this.getRoleMismatchMessage(Role.KNIGHT))
+                            .catch(Failed.toReplyInteraction("discuss-not-knight"));
+                        continue;
+                    }
+                    
+                    const msg = interaction.message;
+                    if(msg instanceof Message) {
+                        msg.delete().catch(Failed.toDeleteMessageIn(msg.channel, "discuss-source-b"));
+                    }
+                    interaction.reply(this.getKnightMessage()).catch(Failed.toReplyInteraction("discuss-knight"));
+
+                    this.setGameState(GameState.KNIGHT);
+                    return true;
+            }
+        }
+    }
+
+    private async turnOfKnight() {
+        let cancelled = false;
+        let handler = () => {
+            cancelled = true;
+        };
+        this.interactionStorage.on("cancelled", handler);
+
+        while(true) {
+            const interaction = await this.waitNextRoleInteraction(Role.KNIGHT);
+            if(cancelled || !interaction) {
+                this.interactionStorage.off("cancelled", handler);
+                continue;
+            }
+            if(interaction.customId != "knight_inspect") {
+                Logger.warn("Not knight_inspect, but get " + interaction.customId);
+                continue;
+            }
+            if(!interaction.isSelectMenu()) continue;
+            
+            const player = this.getPlayerFromInteraction(interaction)!!;
+            const opt = interaction.values[0];
+            if(!opt.startsWith("player_")) {
+                Logger.warn("Not started with player_, but get " + opt);
+                continue;
+            }
+    
+            const n = parseInt(opt.substring(7));
+            const p = this.players.find(p => p.number == n)!!;
+            const isWolf = p.role == Role.WEREWOLVES;
+    
+            (isWolf ? p : player).kill();
+
+            await interaction.reply(this.bot.getCompactedMessageWithEmbed( `<@${p.member.id}> 是${isWolf ? "狼人，狼人死亡" : "好人，騎士以死謝罪"}。`))
+                .catch(Failed.toReplyInteraction("knight-result"));
+    
+            const msg = interaction.message;
+            if(msg instanceof Message) {
+                msg.delete().catch(Failed.toDeleteMessageIn(msg.channel, "knight-source"));
+            }
+            return;
+        }
     }
 
     private async turnOfVote(appendEmbeds: any[] = []) {
-        this.state = GameState.VOTE;
-        Logger.log("state (" + this.guildId + ") -> vote");
-
-        // @ts-ignore
-        const api: any = this.bot.api.api;
+        this.setGameState(GameState.VOTE);
 
         const voteTime = this.config.isDebugShortTime() ? 10 : 30;
         this.voteQuote = `請開始投票，${voteTime} 秒後結束投票。`;
@@ -1068,41 +844,30 @@ export class Werewolves {
         });
         this.refreshVotes();
 
-        const r = await api.channels(this.threadChannel!!).messages.post({
-            data: this.getVoteMessage(appendEmbeds)
-        }).catch(this.bot.failedToSendMessage("vote-turn"));
-        this.voteMsgId = r.id;
+        try {
+            const r = await this.threadChannel?.send(this.getVoteMessage(appendEmbeds));
+            this.voteMsgId = r!!.id;
 
-        this.currentTimeout = setTimeout(() => {
-            this.endOfVote();
-        }, voteTime * 1000);
+            this.currentTimeout = setTimeout(() => {
+                this.endOfVote();
+            }, voteTime * 1000);
+        } catch(ex) {
+            Failed.toSendMessageIn(this.threadChannel!!, "vote-turn")(ex);
+        }
     }
 
     private async endOfVote() {
-        // @ts-ignore
-        let api: any = this.bot.api.api;
         Logger.log("endOfVote() called");
-
-        await api.channels(this.threadChannel!!).messages(this.voteMsgId).delete().catch(this.bot.failedToDeleteMessage("vote-msg"));
+        await this.threadChannel?.messages.delete(this.voteMsgId!!).catch(Failed.toDeleteMessageIn(this.threadChannel, "vote-msg"));
 
         this.votes.sort((a, b) => {
             return b.votes - a.votes;
         });
 
         if(this.votes[0].votes == 0) {
-            // @ts-ignore
-            api = this.bot.api.api;
-            await api.channels(this.threadChannel!!).messages.post({
-                data: {
-                    embeds: [
-                        {
-                            ...this.getEmbedBase(),
-                            description: `無人投票，進入下一晚...`
-                        }
-                    ]
-                }
-            }).catch(this.bot.failedToSendMessage("vote-transition-night"));
-            this.turnOfWerewolves();
+            await this.threadChannel?.send(this.bot.getCompactedMessageWithEmbed("無人投票，進入下一晚..."))
+                .catch(Failed.toSendMessageIn(this.threadChannel, "vote-transition-night"));
+            this.isVoting = false;
             return;
         }
 
@@ -1124,76 +889,217 @@ export class Werewolves {
             return;
         }
 
-        // @ts-ignore
-        api = this.bot.api.api;
-        await api.channels(this.threadChannel!!).messages.post({
-            data: {
-                embeds: [
-                    {
-                        ...this.getEmbedBase(),
-                        description: `最高票為 <@${this.votes[0].member.id}>`
-                    }
-                ]
-            }
-        }).catch(this.bot.failedToSendMessage("vote-down-max"));
+        await this.threadChannel?.send(this.bot.getCompactedMessageWithEmbed(`最高票為 <@${this.votes[0].member.id}>`))
+            .catch(Failed.toSendMessageIn(this.threadChannel, "vote-down-max"));
         this.votes[0].kill();
+        this.isVoting = false;
+    }
 
-        this.turnOfHunter("", () => {
-            this.turnOfWerewolves();
-        });
+    // --------------==================================-------------- //
+
+    private stopFromError() {
+        if(this.inProgress) {
+            this.endReason = GameEndReason.CUSTOM;
+            this.stopGame("因為遊戲內部錯誤，遊戲已結束。造成不便請見諒！");
+        }
+    }
+
+    private async sendMemberNotPlayerInteraction(interaction: CommandInteraction | MessageComponentInteraction) {
+        interaction.reply({
+            ...this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。"),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("member-not-player"));
+    }
+
+    private async sendPlayerDeadInteraction(interaction: CommandInteraction | MessageComponentInteraction) {
+        await interaction.reply(this.getPlayerDeadInvalidMessage()).catch(Failed.toReplyInteraction("player-dead"));
+    }
+
+    private async sendPlayerRoleMismatchInteraction(interaction: CommandInteraction | MessageComponentInteraction, role: Role) {
+        await interaction.reply(this.getRoleMismatchMessage(role)).catch(Failed.toReplyInteraction("role-mismatch"));
+    }
+
+    private async handleLobbyInteraction(interaction: MessageComponentInteraction) {
+        if(!interaction.member) return;
+        const userId = interaction.member.user.id;
+        const guild = this.bot.api.guilds.cache.get(this.guildId)!!;
+        const member = await guild.members.fetch(userId);
+
+        var sendEphemeralEmbed = (desc: string) => {
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed(desc),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("lobby-ephemeral"));
+        }
+
+        switch(interaction.customId) {
+            case "game_join":
+                if(this.players.length >= this.config.getMaxPlayers()) {
+                    sendEphemeralEmbed("人數已滿，無法再加入。");
+                    return;
+                }
+
+                if(!this.players.find(m => m.member.id == userId)) {
+                    const p = new Player(this.players.length + 1, member);
+                    this.players.push(p);
+                }
+                break;
+            case "game_leave":
+                if(!this.players.find(p => p.member.id == userId)) {
+                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+                    return;
+                }
+
+                const index = this.players.findIndex(m => m.member.id == userId);
+                if(index != -1) {
+                    this.players.splice(index, 1);
+                }
+                break;
+            case "game_start":
+                if(!this.players.find(p => p.member.id == userId)) {
+                    sendEphemeralEmbed("你不在遊戲當中，無法執行該操作。");
+                    return;
+                }
+                if(this.inProgress) return;
+
+                this.startGame(interaction);  
+                return;
+        }
+
+        interaction.update(this.getLobbyMessage())
+            .catch(Failed.toReplyInteraction("lobby"));
+
+        if(this.interaction != null) {
+            if(interaction.message instanceof Message) {
+                const chn = interaction.message.channel;
+                if(chn instanceof TextChannel) {
+                    this.gameChannel = chn;
+                    this.interaction = null;
+                }
+            }
+        }
+    }
+    
+    private async handleVoteInteraction(interaction: MessageComponentInteraction) {
+        if(!interaction.isSelectMenu()) return;
+        if(interaction.customId != "vote") {
+            return;
+        }
+
+        const player = this.getPlayerFromInteraction(interaction);
+        if(!player) {
+            interaction.reply({
+                ...this.bot.getCompactedMessageWithEmbed("你不在遊戲當中，無法執行該操作。"),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("vote-ephemeral"));
+            return;
+        }
+        if(!player?.alive) {
+            interaction.reply({
+                ...this.getPlayerDeadInvalidMessage(),
+                ephemeral: true
+            }).catch(Failed.toReplyInteraction("vote-dead"));
+            return;
+        }
+
+        const opt: string = interaction.values[0];
+        if(!opt.startsWith("vote_")) {
+            Logger.warn("Not started with vote_, but get " + opt);
+            return;
+        }
+
+        const n = parseInt(opt.substring(5));
+        player.choice = player.alive ? n : -1;
+        this.refreshVotes();
+        
+        interaction.reply({
+            ...this.getVoteMessage(),
+            ephemeral: true
+        }).catch(Failed.toReplyInteraction("vote-result"));
+    }
+
+    private getRoleMismatchMessage(role: Role): InteractionReplyOptions {
+        return {
+            ephemeral: true,
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: `你的身分不是${Role.getName(role)}，無法執行這個操作。`
+                }
+            ]
+        };
     }
 
     public assignRoles() {
-        const roleCount: number[] = [];
-        for(var i=0; i<Role.COUNT; i++) {
-            roleCount.push(0);
+        const b = this.players.length;
+        const roleMaxPlayers = this.config.getRoleMaxPlayers();
+        const features = this.config.getFeatures();
+        const threshold = this.config.getThresholds();
+
+        const roles: Role[] = [];
+        let pushRole = (role: Role, count: number) => {
+            for(let i=0; i<count; i++) roles.push(role);  
+        };
+        pushRole(Role.SEER, roleMaxPlayers.seer);
+        pushRole(Role.WITCH, roleMaxPlayers.witch);
+        pushRole(Role.HUNTER, roleMaxPlayers.hunter);
+        pushRole(Role.WEREWOLVES, roleMaxPlayers.werewolves);
+        if(b >= threshold.knight) {
+            pushRole(Role.KNIGHT, roleMaxPlayers.knight);
+        }
+        if(features.hasThief) {
+            pushRole(Role.THIEF, 1);
+        }
+        if(roles.length < b) {
+            pushRole(Role.INNOCENT, b - roles.length);
+        }
+        roles.sort(() => Math.random() - 0.5);
+
+        this.players.forEach(player => {
+            player.role = roles.shift()!!;
+        });
+        this.rolesPool = roles;
+
+        // -- Game features
+
+        if(features.hasThief) {
+            this.rolesPool = this.players.map(p => p.role);
+            this.rolesPool.push(Role.INNOCENT, Role.INNOCENT);
+            this.rolesPool.sort(() => Math.random() - 0.5);
+
+            const thief = this.players.find(p => p.role == Role.THIEF);
+            if(thief) {
+                thief.isThief = true;
+
+                const [a, b] = this.rolesPool;
+                if(a == Role.WEREWOLVES || b == Role.WEREWOLVES) {
+                    thief.role = Role.WEREWOLVES;
+                }
+            }
         }
 
-        const b = this.players.length;
-        var mod = (b + 1) % 3;
-        var priestCount = ((b + 1) / 9) | 0;
-        var counter = 0;
-
-        const settings = this.config.getRoleMaxPlayers();
-        const seerCount = settings.seer;
-        const witchCount = settings.witch;
-        const hunterCount = settings.hunter;
-        const knightCount = settings.knight;
-        const werewolvesCount = settings.werewolves;
-        const knightThreshold = this.config.getKnightThreshold();
-
-        let maxRole = seerCount;
-        maxRole += witchCount;
-        maxRole += hunterCount;
-        maxRole += werewolvesCount;
-        if(b > knightThreshold) maxRole += knightCount;
-        
-        while (counter < maxRole) {
-            const innocents = this.players.filter(p => p.role == Role.INNOCENT);
-            const r = Math.floor((Role.COUNT - 1) * Math.random());
-            const e = Math.floor(Math.random() * innocents.length);
-            const p = innocents[e];
-            if(!p) break;
-
-            var role = Role.INNOCENT;
-
-            if(r == Role.SEER && roleCount[Role.SEER] < seerCount) {
-                role = Role.SEER;
-            } else if(r == Role.WITCH && roleCount[Role.WITCH] < witchCount) {
-                role = Role.WITCH;
-            } else if(r == Role.HUNTER && roleCount[Role.HUNTER] < hunterCount) {
-                role = Role.HUNTER;
-            } else if(r == Role.KNIGHT && b > knightThreshold && roleCount[Role.KNIGHT] < knightCount) {
-                role = Role.KNIGHT;
-            } else if(r == Role.WEREWOLVES && roleCount[Role.WEREWOLVES] < werewolvesCount) {
-                role = Role.WEREWOLVES;
-            } else {
-                continue;
+        if(features.hasCouples && b >= threshold.couples) {
+            const indices: number[] = [];
+            for(let i=0; i<b; i++) {
+                indices.push(i);
             }
+            indices.sort(() => Math.random() - 0.5);
+            
+            const x = this.players[indices.shift()!!];
+            const y = this.players[indices.shift()!!];
+            x.couple = y;
+            y.couple = x;
+        }
 
-            roleCount[role]++;
-            p.role = role;
-            counter++;
+        if(features.hasSheriff && b >= threshold.sheriff) {
+            const indices: number[] = [];
+            for(let i=0; i<b; i++) {
+                indices.push(i);
+            }
+            indices.sort(() => Math.random() - 0.5);
+            
+            const x = this.players[indices.shift()!!];
+            x.isSheriff = true;
         }
     }
 
@@ -1203,6 +1109,48 @@ export class Werewolves {
             if(p.alive) count++;
         });
         return count;
+    }
+
+    private getThiefMessage() {
+        return {
+            embeds: [
+                {
+                    ...this.getEmbedBase(),
+                    description: "本場有盜賊，盜賊請先選身分："
+                }
+            ],
+            components: [
+                {
+                    type: 1,
+                    components: [
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "身分1",
+                            custom_id: "thief_0"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "身分2",
+                            custom_id: "thief_1"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "查看",
+                            custom_id: "thief_inspect"
+                        },
+                        {
+                            type: 2,
+                            style: 2,
+                            label: "跳過",
+                            custom_id: "thief_skip"
+                        }
+                    ]
+                }
+            ]
+        };
     }
 
     private getWerewolvesMessage(): any {
@@ -1373,7 +1321,7 @@ export class Werewolves {
         };
     }
 
-    private getWitchMessageB(type: "投毒" | "解藥"): any {
+    private getWitchMessageB(type: WitchActions[keyof WitchActions]): any {
         var options = this.players.flatMap(m => {
             const name = (m.member.nickname ?? m.member.user.username) + "#" + m.member.user.discriminator;
             return m.alive ? [
@@ -1538,7 +1486,7 @@ export class Werewolves {
     }
 
     private getLobbyEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             return `${i+1}. <@${m.member.id}>`;
         }).join("\n");
 
@@ -1548,6 +1496,7 @@ export class Werewolves {
 
         return {
             ...this.getEmbedBase(),
+            ...this.bot.getCreditFooterEmbed(),
             fields: [
                 {
                     name: "目前玩家",
@@ -1563,26 +1512,26 @@ export class Werewolves {
         };
     }
 
-    private getLobbyComponents(): any {
+    private getLobbyComponents(): MessageActionRowOptions[] {
         return [
             {
                 type: 1,
                 components: [
                     {
                         type: 2,
-                        custom_id: "game_join",
+                        customId: "game_join",
                         style: 2,
                         label: "加入"
                     },
                     {
                         type: 2,
-                        custom_id: "game_leave",
+                        customId: "game_leave",
                         style: 2,
                         label: "離開"
                     },
                     {
                         type: 2,
-                        custom_id: "game_start",
+                        customId: "game_start",
                         style: 2,
                         label: "開始遊戲",
                         disabled: this.players.length < this.config.getMinPlayers()
@@ -1602,7 +1551,7 @@ export class Werewolves {
     }
 
     private getGameEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
             return `${i+1}. ${f}<@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
         }).join("\n");
@@ -1631,9 +1580,10 @@ export class Werewolves {
     }
 
     private getEndGameEmbed(): any {
-        var players = this.players.map((m: WPlayer, i: number) => {
+        var players = this.players.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
-            return `${i+1}. ${f}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
+            const wasThief = m.isThief && m.role != Role.THIEF;
+            return `${i+1}. ${f}${wasThief ? "盜賊 :arrow_right: " : ""}${Role.getName(m.role)}: <@${m.member.id}>${f}${!m.alive ? " (死亡)" : ""}`;
         }).join("\n");
 
         if(players == "") {
@@ -1660,7 +1610,7 @@ export class Werewolves {
     }
 
     private getVoteEmbed(): any {
-        var players = this.votes.map((m: WPlayer, i: number) => {
+        var players = this.votes.map((m: Player, i: number) => {
             const f = m.alive ? "" : "~~";
             return `${i+1}. ${f}<@${m.member.id}>${f}${!m.alive ? " (死亡)" : ` (${m.votes} 票)`}`;
         }).join("\n");
@@ -1683,11 +1633,6 @@ export class Werewolves {
         };
     }
 
-    public async startLobby(interaction: KInteractionWS | null = null) {
-        this.prepareLobby();
-        await this.showLobby(interaction);
-    }
-
     public prepareLobby() {
         Logger.log("state (" + this.guildId + ") -> ready");
 
@@ -1696,10 +1641,7 @@ export class Werewolves {
         this.loadConfig();
     }
 
-    public async showLobby(interaction: KInteractionWS | null = null) {
-        // @ts-ignore
-        const api: any = this.bot.api.api;
-
+    public async showLobby(interaction: CommandInteraction | null = null) {
         if(!interaction) {
             const chn = this.config.getGameChannel();
             if(chn && chn != "") {
@@ -1714,26 +1656,20 @@ export class Werewolves {
             }
 
             Logger.log("Send ready message to channel " + (this.gameChannel?.name ?? "<null>"));
-            const r = await api.channels(this.gameChannel!!.id).messages.post({
-                data: this.getLobbyMessage()
-            }).catch(this.bot.failedToSendMessage("lobby-renew-game"));
-            this.threadChannel = r.id;
-            this.appId = null;
-            this.interactionToken = null;
+            const r = await this.gameChannel?.send(this.getLobbyMessage()).catch(Failed.toSendMessageIn(this.gameChannel!!, "lobby-renew-game"));
+            this.lobbyMessage = r ?? null;
+            this.interaction = null;
         } else {
+            if(!interaction.guildId) return;
+
             Logger.log("Send ready message by interaction respond");
-            await api.interactions(interaction.id, interaction.token).callback.post({
-                data: {
-                    type: 4,
-                    data: this.getLobbyMessage()
-                }
-            }).catch(this.bot.failedToSendMessage("lobby-cmd-interaction"));
-            this.threadChannel = null;
-            this.appId = interaction.application_id;
-            this.interactionToken = interaction.token;
+            await interaction.reply(this.getLobbyMessage()).catch(Failed.toReplyInteraction("lobby-cmd-interaction"));
+
+            this.lobbyMessage = null;
+            this.interaction = interaction;
 
             const bot = this.bot.api;
-            const chn = bot.guilds.cache.get(interaction.guild_id)!!.channels.cache.get(interaction.channel_id);
+            const chn = bot.guilds.cache.get(interaction.guildId)!!.channels.cache.get(interaction.channelId);
             if(chn instanceof TextChannel) {
                 this.gameChannel = chn;
                 this.config.data.gameChannel = chn.id;
@@ -1742,122 +1678,112 @@ export class Werewolves {
         }
     }
 
-    public async startGame(ev: KInteractionWS) {
+    public async startGame(interaction: MessageComponentInteraction) {
         this.inProgress = true;
         this.startTime = new Date();
-
-        const msgId = ev.message.id;
-        const api = this.bot.api;
-        const chn = api.guilds.cache.get(this.guildId)!!.channels.cache.get(this.config.getGameChannel()) as PlayableChannel;
-        const msg = await chn.messages.fetch(msgId);
+        const msgId = interaction.message.id;
 
         this.assignRoles();
 
         this.players.forEach(p => {
             let suffix = "";
+
             if(p.role == Role.WEREWOLVES) {
                 suffix += "\n狼人: " + this.getWerewolves().map(p => p.member.user.tag).join("、");
+                
+                if(p.isThief) {
+                    suffix += "\n你原本是盜賊。因為抽身分的選項中包含狼人，你已自動被轉為狼人。";
+                }
+            }
+
+            if(!!p.couple) {
+                suffix += "\n**你和 " + p.couple.member.user.tag + " 是 CP。**";
             }
 
             p.member.send({
-                embed: {
-                    ...this.getEmbedBase(),
-                    description: `你的身分是: **${Role.getName(p.role)}。**` + suffix
-                }
+                embeds: [
+                    {
+                        ...this.getEmbedBase(),
+                        description: `你的身分是: **${Role.getName(p.role)}。**` + suffix
+                    }
+                ]
             });
         });
 
-        // @ts-ignore
-        let rest: any = api.api;
-        rest.interactions(ev.id, ev.token).callback.post({
-            data: {
-                type: 7,
-                data: {
+        interaction.update({
+            components: [
+                {
+                    type: 1,
                     components: [
                         {
-                            type: 1,
-                            components: [
-                                {
-                                    type: 2,
-                                    custom_id: "game_join",
-                                    style: 2,
-                                    label: "加入",
-                                    disabled: true
-                                },
-                                {
-                                    type: 2,
-                                    custom_id: "game_leave",
-                                    style: 2,
-                                    label: "離開",
-                                    disabled: true
-                                },
-                                {
-                                    type: 2,
-                                    custom_id: "game_start",
-                                    style: 2,
-                                    label: "遊戲進行中",
-                                    disabled: true
-                                }
-                            ]
+                            type: 2,
+                            customId: "game_join",
+                            style: 2,
+                            label: "加入",
+                            disabled: true
+                        },
+                        {
+                            type: 2,
+                            customId: "game_leave",
+                            style: 2,
+                            label: "離開",
+                            disabled: true
+                        },
+                        {
+                            type: 2,
+                            customId: "game_start",
+                            style: 2,
+                            label: "遊戲進行中",
+                            disabled: true
                         }
                     ]
                 }
-            }
-        }).catch(this.bot.failedToEditMessage("lobby-patch-playing"));
+            ]
+        }).catch(Failed.toReplyInteraction("lobby-patch-playing"));
 
         // Create a thread from the lobby message
-        // @ts-ignore
-        rest = api.api;
-        const r = await rest.channels(this.gameChannel!!.id).messages(msgId).threads.post({
-            data: {
-                name: "狼人殺遊戲",
-                auto_archive_duration: 60
+        try {
+            if(interaction.message instanceof Message) {
+                const r = await interaction.message.startThread({
+                    name: "狼人殺遊戲",
+                    autoArchiveDuration: 60,
+                    reason: "建立狼人殺機器人的遊戲環境"
+                })!!;
+                this.hasThread = true;
+                
+                for(var i=0; i<this.players.length; i++) {
+                    const p = this.players[i].member;
+                    r.members.add(p).catch(Failed.toAddThreadMemberIn(r, "game-thread-member"));
+                }
+
+                this.threadChannel = r;
+                this.daysCount = 0;
+
+                this.currentTimeout = setTimeout(() => {
+                    this.runGameLoop();
+                }, 10000);
             }
-        }).catch(this.bot.failedToCreateThread("game-thread"));
-        this.hasThread = true;
-        
-        for(var i=0; i<this.players.length; i++) {
-            // @ts-ignore
-            rest = api.api;
-            const p = this.players[i].member.id;
-            rest.channels(r.id, "thread-members", p).put().catch(this.bot.failedToAddThreadMember("game-thread-member"));
+        } catch(ex) {
+            Logger.error("Failed to create a thread channel for the game.");
+            Logger.error(ex.toString());
         }
-
-        this.threadChannel = r.id;
-        this.daysCount = 0;
-
-        this.currentTimeout = setTimeout(() => {
-            this.checkEndOrNext(() => {
-                this.turnOfWerewolves();
-            });
-        }, 10000);
     }
 
     public async cleanGameMessages() {
-        // @ts-ignore
-        let api: any = this.bot.api.api;
         if(this.threadChannel != null) {
             if(this.hasThread) {
-                await api.channels(this.threadChannel).delete().catch(this.bot.failedToDeleteChannel("clean-thread"));
+                await this.threadChannel?.delete().catch(Failed.toDeleteChannel("clean-thread"));
             }
 
-            // @ts-ignore
-            api = this.bot.api.api;
-            await api.channels(this.gameChannel!!.id).messages(this.threadChannel).delete().catch(this.bot.failedToDeleteMessage("clean-game-message"));
-
+            await this.lobbyMessage?.delete().catch(Failed.toDeleteMessageIn(this.gameChannel!!, "clean-game-message"));
             this.threadChannel = null;
-            this.appId = null;
-            this.interactionToken = null;
+            this.interaction = null;
         }
 
-        if(this.appId != null && this.interactionToken != null) {
-            // @ts-ignore
-            api = this.bot.api.api;
-            await api.webhooks(this.appId, this.interactionToken).messages("@original").delete();
-
-            this.threadChannel = null;
-            this.appId = null;
-            this.interactionToken = null;
+        if(this.interaction != null) {
+            if(this.interaction.isCommand()) {
+                await this.interaction.webhook.deleteMessage("@original");
+            }
         }
 
         this.hasThread = false;
@@ -1880,7 +1806,13 @@ export class Werewolves {
         await this.stopGame(gameMsg);
     }
 
+    private cancel() {
+        this.cancelled = true;
+    }
+
     public async stopGame(message: string) {
+        this.inProgress = false;
+
         if(this.currentTimeout) {
             clearTimeout(this.currentTimeout);
         }
@@ -1898,31 +1830,28 @@ export class Werewolves {
                 components: []
             }
         };
-        // @ts-ignore
-        let api: any = this.bot.api.api;
-        api.channels(this.threadChannel!!).messages.post(data).catch(this.bot.failedToSendMessage("end-game-in-thread"));
-        
-        const dateStr = new Date().toISOString().replace(/(?=.*?)T/, " ").replace(/(?=.*?)\..*/, "").replace(/:/g, "-");
-        // @ts-ignore
-        api = this.bot.api.api;
-        api.channels(this.threadChannel!!).patch({
-            data: {
-                name: "狼人殺遊戲紀錄：" + dateStr,
-                archived: true,
-                locked: true
-            }
-        })
-        
-        // @ts-ignore
-        api = this.bot.api.api;
-        api.channels(this.gameChannel!!.id).messages(this.threadChannel!!).patch(data).catch(this.bot.failedToSendMessage("end-game-in-history"));
-        this.threadChannel = null;
-        this.inProgress = false;
-        this.players = [];
-        this.state = GameState.READY;
 
-        // Users likely don't expect the bot to start again automatically,
-        // so we don't do that from now
+        const threadChannel = this.threadChannel;
+        await threadChannel?.send(data.data).catch(Failed.toSendMessageIn(threadChannel, "end-game-in-thread"));
+
+        const dateStr = new Date().toISOString().replace(/(?=.*?)T/, " ").replace(/(?=.*?)\..*/, "").replace(/:/g, "-");
+        await threadChannel?.edit({
+            name: "狼人殺遊戲紀錄：" + dateStr,
+            archived: true,
+            locked: true
+        });
+        setTimeout( () => {
+            threadChannel?.delete("清除已結束的狼人殺討論串");
+        }, 20000);
+        await this.gameChannel?.messages.edit(threadChannel!!.id, data.data).catch(Failed.toEditMessageIn(this.gameChannel, "end-game-in-history"));
+
+        this.interactionStorage.cancel();
+        this.cancel();
+
+        this.threadChannel = null;
+        this.players = [];
+        this.votes = [];
+        this.setGameState(GameState.READY);
     }
 
     // -- Dump --

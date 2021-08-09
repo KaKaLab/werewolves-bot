@@ -18,8 +18,18 @@
 > * `knight` 代表「騎士」，預設為 `1`。
 > * `werewolves` 代表「狼人」，預設為 `2`。
 
-* ### `knightThreshold`
-> 開始出現騎士所需要的玩家數量。預設為 `6`。
+* ### `thresholds.[role]`
+> 這些選項代表的是開始出現 `role` 所需要的玩家數量。其中：
+> * `knight` 代表「騎士」，預設為 `7`。
+> * `werewolves` 代表「CP」，預設為 `7`。
+> * `sheriff` 代表「警長」，預設為 `7`。
+
+* ### `features.[feature]`
+> 這些選項控制功能 `feature` 的開關狀態。其中：
+> * `beta` 代表 Beta 功能， **Bug 出沒注意。** 預設為 `false`。
+> * `hasCouples` 代表是否啟用「CP」，預設為 `false`。
+> * `hasSheriff` 代表是否啟用「警長」，預設為 `false`。
+> * `hasThief` 代表是否啟用「警長」，預設為 `false`。
 
 * ### `maxPlayers`
 > 遊戲玩家的數量上限。預設為 `12`。
@@ -32,9 +42,6 @@
 
 * ### `debugShortTime`
 > 為了除錯用途而設計，值為 `true` 時縮短投票與發言時間。預設為 `false`。
-
-* ### `enableBeta`
-> 啟用 Beta 功能， **Bug 出沒注意。** 預設為 `false`。
 
 ---
 

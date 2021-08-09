@@ -5,13 +5,12 @@ import { Logger } from './utils/logger';
 const CONFIG_FILE_NAME: string = 'config.json';
 const GUILD_DIR_NAME: string = 'guild_data';
 
-type RoleMaxPlayersStruct = {
-    seer: number,
-    witch: number,
-    hunter: number,
-    knight: number,
-    werewolves: number
+type ConfigStruct = typeof BotGuildConfig.defaultConfig & {
+    [index: string]: any
 };
+type RoleMaxPlayersStruct = ConfigStruct["roleMaxPlayers"];
+type ThresholdsStruct = ConfigStruct["thresholds"];
+type FeaturesStruct = ConfigStruct["features"];
 
 export class BotGuildConfig {
     public id: string;
@@ -28,17 +27,25 @@ export class BotGuildConfig {
             knight: 1,
             werewolves: 2,
         },
-        enableBeta: false,
-        knightThreshold: 6,
-        couplesThreshold: 6,
-        version: 0
+        thresholds: {
+            knight: 7,
+            couples: 7,
+            sheriff: 7
+        },
+        features: {
+            beta: false,
+            hasCouples: false,
+            hasSheriff: false,
+            hasThief: false
+        },
+        version: 1
     };
     
-    private get defaults() {
+    public get defaults() {
         return BotGuildConfig.defaultConfig;
     }
 
-    public data: typeof BotGuildConfig.defaultConfig;
+    public data: ConfigStruct;
 
     constructor(guildId: string) {
         this.data = BotGuildConfig.defaultConfig;
@@ -71,8 +78,17 @@ export class BotGuildConfig {
         this.save();
     }
 
+    /**
+     * Move old options to new options, or convert from old format to
+     * new format, and delete unused/old options.
+     */
     public upgrade() {
-        
+        if(this.data.version == 0) {
+            this.data.version = 1;
+            this.data["enableBeta"] = undefined;
+            this.data["knightThreshold"] = undefined;
+            this.data["couplesThreshold"] = undefined;
+        }
     }
 
     public getRoleMaxPlayers(): RoleMaxPlayersStruct {
@@ -81,8 +97,12 @@ export class BotGuildConfig {
         };
     }
 
-    public getKnightThreshold(): number {
-        return this.data.knightThreshold;
+    public getThresholds(): ThresholdsStruct {
+        return this.data.thresholds;
+    }
+
+    public getFeatures(): FeaturesStruct {
+        return this.data.features;
     }
 
     public save() {

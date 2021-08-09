@@ -4,6 +4,7 @@ export enum Role {
     HUNTER,
     KNIGHT,
     WEREWOLVES,
+    THIEF,
     INNOCENT
 }
 
@@ -15,9 +16,10 @@ export namespace Role {
             2: "獵人",
             3: "騎士",
             4: "狼人",
-            5: "平民"
+            5: "盜賊",
+            6: "平民"
         }[role] ?? "未知";
     }
 
-    export const COUNT = 6;
+    export const COUNT = 7;
 }

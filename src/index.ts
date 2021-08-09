@@ -2,15 +2,29 @@ import { WerewolvesBot } from "./bot";
 import { Logger, LogLevel } from "./utils/logger";
 import * as readline from "readline";
 
+// Check version because discord.js requires Node 16.6 or higher
+let supported = false;
+const [major, minor] = process.versions.node.split(".").map(s => parseInt(s));
+if(major >= 16) {
+    if(minor >= 6) {
+        supported = true;
+    }
+}
+if(!supported) {
+    Logger.fatal("This bot requires Node 16.6 or higher.");
+    Logger.fatal("Please update your Node version and try again.");
+    process.exit(1);
+}
+
 process.setUncaughtExceptionCaptureCallback(err => {
     try {
+        Logger.error("An uncaught exception occured and it is not safe to continue.");
         Logger.error(err.toString());
-        Logger.error("Exiting...");
     } catch(ex) {
         console.error(err.toString());
         console.error("Exiting...");
+        process.exit(0);
     }
-    process.exit(0);
 });
 
 Logger.level = LogLevel.log;
